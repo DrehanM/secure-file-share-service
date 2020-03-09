@@ -40,8 +40,17 @@ const (
 	SALT_BYTES            = 16
 	USER_STRUCT_KEY_BYTES = 32
 	USER_STRUCT_IV_BYTES  = 16
-	DIGITAL_SIGNATURE_PREFIX = "digisig"
+
+	MAX_BLOCK_SIZE = 256
+
 	ACCOUNT_INFO_PREFIX = "account_info"
+	SALT_PREFIX         = "salt"
+	BLOCK_PREFIX        = "block"
+	METADATA_PREFIX     = "metadata"
+	ACCESS_TOKEN_PREFIX = "access_token"
+	FILEKEY_PREFIX      = "filekey"
+	FILE_DS_PREFIX      = "file digisig"
+	USER_DS_PREFIX      = "user digisig"
 )
 
 // This serves two purposes:
@@ -121,6 +130,13 @@ func makeDataStoreKey(keyData string) (key uuid.UUID, err error) {
 	return key, nil
 }
 
+func min(int a, int b) (int) {
+	if a < b {
+		return a
+	} 
+	return b
+}
+
 // The structure definition for a user record
 type User struct {
 	Username   string
@@ -132,6 +148,26 @@ type User struct {
 	// You can add other fields here if you want...
 	// Note for JSON to marshal/unmarshal, the fields need to
 	// be public (start with a capital letter)
+}
+
+type Sharetree struct {
+	Parent string
+	Children []string
+}
+
+type Block struct {
+	BlockID uint32
+	Contents [MAX_BLOCK_SIZE]byte
+	Next *Block
+}
+
+type Metadata struct {
+	Owner string
+	Filename string
+	BlockCount uint32
+	Head *Block
+	Members []string
+	Sharetree []Sharetree
 }
 
 // This creates a user.  It will only be called once for a user
@@ -187,12 +223,8 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	//append ciphertext to signature
 	var dataToStore []byte = addSignatureToCipher(signature, cipher)
 
-<<<<<<< HEAD
 	var dataStoreKey string = ACCOUNT_INFO_PREFIX + userdata.Username
 	key, err := makeDataStoreKey(dataStoreKey)
-=======
-	key, err := makeDataStoreKey("account_info" + userdata.Username)
->>>>>>> 6c7d3bec90950732fd16a6ba55e7e6203ce2c862
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +238,6 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	//Update keyStore
 	userlib.KeystoreSet(userdata.Username, userdata.PublicKey)
-	userlib.KeystoreSet(DIGITAL_SIGNATURE_PREFIX + userdata.Username, userdata.PublicSignatureKey)
 
 	//Update dataStore
 	userlib.DatastoreSet(key, dataToStore)
@@ -221,7 +252,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 func GetUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 
-	key, err := makeDataStoreKey("account_info" + username)
+	key, err := makeDataStoreKey(ACCOUNT_INFO_PREFIX + username)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +262,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		return nil, errors.New("username not found error")
 	}
 
-	saltkey, err := makeDataStoreKey("salt" + username)
+	saltkey, err := makeDataStoreKey(SALT_PREFIX + username)
 	if err != nil {
 		return nil, err
 	}
@@ -260,12 +291,65 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	return &userdata, nil
 }
 
+
+//Not tested yet.
+func constructFileBlocks(data []byte) (int, *Block) {
+	
+	head Block := {
+		BlockID 	: 0
+		Contents 	: data[:min(len(data), MAX_BLOCK_SIZE)]
+		Next 		: nil
+	}
+
+	prev := head
+	var current Block
+
+	for i := MAX_BLOCK_SIZE; i < len(data); i += MAX_BLOCK_SIZE {
+		current := {
+			BlockID 	: i / MAX_BLOCK_SIZE
+			Contents 	: data[i:min(len(data), i+MAX_BLOCK_SIZE)]
+			Next		: nil
+		}
+		prev.Next := &current
+		prev := current
+	}
+
+	return len(data) / MAX_BLOCK_SIZE, &head
+
+}
 // This stores a file in the datastore.
 //
 // The plaintext of the filename + the plaintext and length of the filename
 // should NOT be revealed to the datastore!
 func (userdata *User) StoreFile(filename string, data []byte) {
 
+	filekey, err := makeDataStoreKey(METADATA_PREFIX + userdata.Username + filename)
+	metadataJSON, exists := userlib.DatastoreGet(filekey)
+	if !exists {
+
+		sharetree := Sharetree {
+			Parent		: userdata.Username,
+			Children	: string[]{}
+		}
+		
+		metadata := Metadata {
+			Owner		: userdata.Username,
+			Filename	: filename,
+			BlockCount	: 0,
+			Head		: nil,
+			Members		: []string{userdata.Username},
+			Sharetree	: sharetree
+		}
+
+		blockCount, headptr = constructFileBlocks(data)
+
+		//TODO: iterate through block list,
+		//TODO: encrypt/store/sign file data
+
+
+	} else {
+		// TODO: IF file exists
+	}
 	//TODO: This is a toy implementation.
 	UUID, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
 	packaged_data, _ := json.Marshal(data)
