@@ -40,6 +40,8 @@ const (
 	SALT_BYTES            = 16
 	USER_STRUCT_KEY_BYTES = 32
 	USER_STRUCT_IV_BYTES  = 16
+	DIGITAL_SIGNATURE_PREFIX = "digisig"
+	ACCOUNT_INFO_PREFIX = "account_info"
 )
 
 // This serves two purposes:
@@ -184,7 +186,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	var dataToStore []byte = addSignatureToCipher(signature, cipher)
 
-	var dataStoreKey string = "account_info" + userdata.Username
+	var dataStoreKey string = ACCOUNT_INFO_PREFIX + userdata.Username
 	key, err := makeDataStoreKey(dataStoreKey)
 	if err != nil {
 		return nil, err
@@ -192,6 +194,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	//Update keyStore
 	userlib.KeystoreSet(userdata.Username, userdata.PublicKey)
+	userlib.KeystoreSet(DIGITAL_SIGNATURE_PREFIX + userdata.Username, userdata.PublicSignatureKey)
 
 	//Update dataStore
 	userlib.DatastoreSet(key, dataToStore)
