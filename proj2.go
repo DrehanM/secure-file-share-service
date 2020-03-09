@@ -40,6 +40,7 @@ const (
 	SALT_BYTES            = 16
 	USER_STRUCT_KEY_BYTES = 32
 	USER_STRUCT_IV_BYTES  = 16
+<<<<<<< HEAD
 
 	MAX_BLOCK_SIZE = 256
 
@@ -51,6 +52,9 @@ const (
 	FILEKEY_PREFIX      = "filekey"
 	FILE_DS_PREFIX      = "file digisig"
 	USER_DS_PREFIX      = "user digisig"
+=======
+	ACCOUNT_INFO_PREFIX   = "account_info"
+>>>>>>> a8f90477823fd751c650285d34f7a8dcdb4b1d12
 )
 
 // This serves two purposes:
@@ -223,18 +227,23 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	//append ciphertext to signature
 	var dataToStore []byte = addSignatureToCipher(signature, cipher)
 
+<<<<<<< HEAD
+=======
+	//construct key user struct in dataStore
+>>>>>>> a8f90477823fd751c650285d34f7a8dcdb4b1d12
 	var dataStoreKey string = ACCOUNT_INFO_PREFIX + userdata.Username
 	key, err := makeDataStoreKey(dataStoreKey)
 	if err != nil {
 		return nil, err
 	}
 
+	//construct key for salt in dataStore
 	saltkey, err := makeDataStoreKey("salt" + userdata.Username)
 	if err != nil {
 		return nil, err
 	}
 
-	userlib.DebugMsg("%s", string(msg))
+	//userlib.DebugMsg("%s", string(msg))
 
 	//Update keyStore
 	userlib.KeystoreSet(userdata.Username, userdata.PublicKey)
@@ -252,40 +261,59 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 func GetUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 
+<<<<<<< HEAD
 	key, err := makeDataStoreKey(ACCOUNT_INFO_PREFIX + username)
+=======
+	//construct key for user struct
+	key, err := makeDataStoreKey("account_info" + username)
+>>>>>>> a8f90477823fd751c650285d34f7a8dcdb4b1d12
 	if err != nil {
 		return nil, err
 	}
+	//get data from dataStore
 	data, exists := userlib.DatastoreGet(key)
 	if !exists {
 		userlib.DebugMsg("u:" + username + " p:" + password + "does not exist")
 		return nil, errors.New("username not found error")
 	}
 
+<<<<<<< HEAD
 	saltkey, err := makeDataStoreKey(SALT_PREFIX + username)
+=======
+	//construct key for the salt of the user
+	saltkey, err := makeDataStoreKey("salt" + username)
+>>>>>>> a8f90477823fd751c650285d34f7a8dcdb4b1d12
 	if err != nil {
 		return nil, err
 	}
+
+	//get salt from dataStore
 	salt, exists := userlib.DatastoreGet(saltkey)
 	if !exists {
 		userlib.DebugMsg("u:" + username + "salt does not exist")
 		return nil, errors.New("salt not found error")
 	}
+
+	//consruct symmetric key to decrypt user data
 	var symkey []byte = userlib.Argon2Key([]byte(password), salt, USER_STRUCT_KEY_BYTES)
 
 	var decrypted []byte = userlib.SymDec(symkey, data[64:])
 
+	//generate HMAC of decrypted message
 	hmac, err := userlib.HMACEval(symkey, decrypted)
 	if err != nil {
 		return nil, err
 	}
 
+	//get HMAC from downloaed data (first 64 bytes)
 	var hmacOld []byte = data[:64]
 
+	//check to see if HMACS agree, if not, data was corrupted or tampered with
 	if !userlib.HMACEqual(hmac, hmacOld) {
 		return nil, errors.New("MAC doesn't match, user data has been tampered with")
 	}
 
+	//convert json to Go user struct
 	json.Unmarshal(decrypted, &userdata)
 
 	return &userdata, nil
