@@ -10,7 +10,7 @@ import (
 	"reflect"
 	_ "strconv"
 	_ "strings"
-	"testing"
+	"testing
 
 	"github.com/cs161-staff/userlib"
 	_ "github.com/google/uuid"
@@ -63,6 +63,7 @@ func TestGetUser(t *testing.T) {
 	}
 
 }
+
 
 func TestStorage(t *testing.T) {
 	clear()
