@@ -304,7 +304,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 }
 
 //Not tested yet.
-func constructFileBlocks(data []byte) (blockCount int, headptr *Block) {
+/* func constructFileBlocks(data []byte) (blockCount int, headptr *Block) {
 
 	head := Block{
 		BlockID:  0,
@@ -333,7 +333,7 @@ func constructFileBlocks(data []byte) (blockCount int, headptr *Block) {
 
 	return blockCount, &head
 
-}
+} */
 
 // This stores a file in the datastore.
 //
@@ -341,7 +341,7 @@ func constructFileBlocks(data []byte) (blockCount int, headptr *Block) {
 // should NOT be revealed to the datastore!
 func (userdata *User) StoreFile(filename string, data []byte) {
 
-	filekey, err := makeDataStoreKey(METADATA_PREFIX + userdata.Username + filename)
+	/* filekey, err := makeDataStoreKey(METADATA_PREFIX + userdata.Username + filename)
 	if err != nil {
 		return
 	}
@@ -369,7 +369,7 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 
 	} else {
 		// TODO: IF file exists
-	}
+	} */
 	//TODO: This is a toy implementation.
 	UUID, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
 	packaged_data, _ := json.Marshal(data)
