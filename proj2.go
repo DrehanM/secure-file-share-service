@@ -32,12 +32,17 @@ import (
 	// Optional. You can remove the "_" there, but please do not touch
 	// anything else within the import bracket.
 	_ "strconv"
-
 	// if you are looking for fmt, we don't give you fmt, but you can use userlib.DebugMsg.
 	// see someUsefulThings() below:
 )
 
-// This serves two purposes: 
+const (
+	SALT_BYTES            = 16
+	USER_STRUCT_KEY_BYTES = 32
+	USER_STRUCT_IV_BYTES  = 16
+)
+
+// This serves two purposes:
 // a) It shows you some useful primitives, and
 // b) it suppresses warnings for items not being imported.
 // Of course, this function can be deleted.
@@ -68,7 +73,7 @@ func someUsefulThings() {
 	// And a random RSA key.  In this case, ignoring the error
 	// return value
 	var pk userlib.PKEEncKey
-        var sk userlib.PKEDecKey
+	var sk userlib.PKEDecKey
 	pk, sk, _ = userlib.PKEKeyGen()
 	userlib.DebugMsg("Key is %v, %v", pk, sk)
 }
@@ -82,9 +87,46 @@ func bytesToUUID(data []byte) (ret uuid.UUID) {
 	return
 }
 
+func addSignatureToCipher(signature []byte, cipher []byte) (data []byte) {
+	data = append(signature, cipher...)
+	return data
+}
+
+func signMessage(cipher []byte, message []byte, key userlib.DSSignKey) (data []byte, err error) {
+	signature, err := userlib.DSSign(key, message)
+	if err != nil {
+		return nil, err
+	}
+	data = addSignatureToCipher(signature, cipher)
+	return data, nil
+}
+
+func hash(data []byte) (hash []byte, err error) {
+	hash, err = userlib.HMACEval(make([]byte, 16), data)
+	if err != nil {
+		return nil, err
+	}
+	return hash, nil
+}
+
+func makeDataStoreKey(keyData string) (key uuid.UUID, err error) {
+	var keyDatabytes []byte = []byte(keyData)
+	hash, err := hash(keyDatabytes)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	key = bytesToUUID(hash)
+	return key, nil
+}
+
 // The structure definition for a user record
 type User struct {
-	Username string
+	Username            string
+	PrivateKey          userlib.PrivateKeyType
+	PublicKey           userlib.PublicKeyType
+	PrivateSignatureKey userlib.DSSignKey
+	PublicSignatureKey  userlib.DSVerifyKey
+	OwnedFiles          []string
 
 	// You can add other fields here if you want...
 	// Note for JSON to marshal/unmarshal, the fields need to
@@ -104,15 +146,55 @@ type User struct {
 // keystore and the datastore functions in the userlib library.
 
 // You can assume the password has strong entropy, EXCEPT
-// the attackers may possess a precomputed tables containing 
+// the attackers may possess a precomputed tables containing
 // hashes of common passwords downloaded from the internet.
 func InitUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
-	userdataptr = &userdata
 
-	//TODO: This is a toy implementation.
 	userdata.Username = username
-	//End of toy implementation
+	userdata.PublicKey, userdata.PrivateKey, err = userlib.PKEKeyGen()
+	if err != nil {
+		return nil, err
+	}
+
+	userdata.PrivateSignatureKey, userdata.PublicSignatureKey, err = userlib.DSKeyGen()
+	if err != nil {
+		return nil, err
+	}
+
+	userdata.OwnedFiles = []string{}
+
+	var salt []byte = userlib.RandomBytes(SALT_BYTES)
+
+	var symkey []byte = userlib.Argon2Key([]byte(password), salt, USER_STRUCT_KEY_BYTES)
+
+	var IV []byte = userlib.RandomBytes(USER_STRUCT_IV_BYTES)
+
+	msg, err := json.Marshal(userdata)
+	if err != nil {
+		return nil, err
+	}
+
+	var cipher []byte = userlib.SymEnc(symkey, IV, msg)
+
+	signature, err := userlib.HMACEval(symkey, msg)
+	if err != nil {
+		return nil, err
+	}
+
+	var dataToStore []byte = addSignatureToCipher(signature, cipher)
+
+	var dataStoreKey string = "account_info" + userdata.Username
+	key, err := makeDataStoreKey(dataStoreKey)
+	if err != nil {
+		return nil, err
+	}
+
+	//Update keyStore
+	userlib.KeystoreSet(userdata.Username, userdata.PublicKey)
+
+	//Update dataStore
+	userlib.DatastoreSet(key, dataToStore)
 
 	return &userdata, nil
 }
@@ -129,7 +211,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 
 // This stores a file in the datastore.
 //
-// The plaintext of the filename + the plaintext and length of the filename 
+// The plaintext of the filename + the plaintext and length of the filename
 // should NOT be revealed to the datastore!
 func (userdata *User) StoreFile(filename string, data []byte) {
 
