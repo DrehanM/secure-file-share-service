@@ -44,14 +44,15 @@ const (
 
 	MAX_BLOCK_SIZE = 256
 
-	ACCOUNT_INFO_PREFIX = "account_info"
-	SALT_PREFIX         = "salt"
-	BLOCK_PREFIX        = "block"
-	METADATA_PREFIX     = "metadata"
-	ACCESS_TOKEN_PREFIX = "access_token"
-	FILEKEY_PREFIX      = "filekey"
-	FILE_DS_PREFIX      = "file digisig"
-	USER_DS_PREFIX      = "user digisig"
+	ACCOUNT_INFO_PREFIX  = "account_info"
+	SALT_PREFIX          = "salt"
+	BLOCK_PREFIX         = "block"
+	METADATA_PREFIX      = "metadata"
+	ACCESS_TOKEN_PREFIX  = "access_token"
+	SIGNING_TOKEN_PREFIX = "signing_token"
+	FILEKEY_PREFIX       = "filekey"
+	FILE_DS_PREFIX       = "file digisig"
+	USER_DS_PREFIX       = "user digisig"
 )
 
 // This serves two purposes:
@@ -131,7 +132,7 @@ func makeDataStoreKey(keyData string) (key uuid.UUID, err error) {
 	return key, nil
 }
 
-func randomizeEncryptAndSign(contents byte[], publicKey userlib.PKEEncKey, signingKey userlib.DSSignKey) ([]byte, error) {
+func randomizeEncryptAndSign(contents []byte, publicKey userlib.PKEEncKey, signingKey userlib.DSSignKey) ([]byte, error) {
 	IV := userlib.RandomBytes(BLOCK_STRUCT_IV_BYTES)
 	message := append(IV, contents...)
 	ciphertext, err := userlib.PKEEnc(publicKey, message)
@@ -322,7 +323,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 }
 
 //Not tested yet.
-func constructFileBlocks(data []byte) (blockCount int, headptr *Block) {
+func constructFileBlocks(data []byte) (blockCount uint32, headptr *Block) {
 
 	head := Block{
 		BlockID:  0,
@@ -344,7 +345,7 @@ func constructFileBlocks(data []byte) (blockCount int, headptr *Block) {
 		prev = current
 	}
 
-	blockCount = len(data) / MAX_BLOCK_SIZE
+	blockCount = uint32(len(data) / MAX_BLOCK_SIZE)
 	if len(data)%MAX_BLOCK_SIZE > 0 {
 		blockCount++
 	}
@@ -353,15 +354,24 @@ func constructFileBlocks(data []byte) (blockCount int, headptr *Block) {
 
 }
 
-func (metadata Metadata) storeFileBlocks(headptr *Block, filePK userlib.PublicKeyType, fileDSSK userlib.DSSignKey) {
-	var contents, ciphertext, IV, message, signedMessage record []byte
-	key userlib.UUID
-	for block := *headptr; block != nil; block = block.Next {
-		contents, err = json.Marshal(block)
-		record, err = randomizeEncrypeAndSign(contents, filePK, fileDSSK)
-		key, err = makeDataStoreKey(BLOCK_PREFIX + metadata.Owner + metadata.Filename + string(block.BlockID))
+func (metadata Metadata) storeFileBlocks(headptr *Block, filePK userlib.PublicKeyType, fileDSSK userlib.DSSignKey) (err error) {
+
+	for block := headptr; block != nil; block = block.Next {
+		contents, err := json.Marshal(*block)
+		if err != nil {
+			return err
+		}
+		record, err := randomizeEncryptAndSign(contents, filePK, fileDSSK)
+		if err != nil {
+			return err
+		}
+		key, err := makeDataStoreKey(BLOCK_PREFIX + metadata.Owner + metadata.Filename + string(block.BlockID))
+		if err != nil {
+			return err
+		}
 		userlib.DatastoreSet(key, record)
 	}
+	return nil
 }
 
 // This stores a file in the datastore.
@@ -374,7 +384,8 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 	if err != nil {
 		return
 	}
-	metadataJSON, exists := userlib.DatastoreGet(filekey)
+	_, exists := userlib.DatastoreGet(filekey)
+
 	if !exists {
 
 		sharetree := Sharetree{
@@ -396,38 +407,49 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 		metadata.BlockCount = blockCount
 		metadata.Head = headptr
 
-		filePublicKey, filePrivateKey, err = userlib.PKEKeyGen()
-		fileDigiSigPK, fileDigiSigSK, err = userlib.DSKeyGen()
+		filePublicKey, filePrivateKey, _ := userlib.PKEKeyGen()
+		fileDSSignKey, fileDSVerifyKey, _ := userlib.DSKeyGen()
 
-		userlib.KeystoreSet(FILEKEY_PREFIX + metadata.Owner + metadata.Filename, filePublicKey)
-		userlib.KeystoreSet(FILE_DS_PREFIX + metadata.Owner + metadata.Filename, fileDigiSigPK)
-		metadata.storeFileBlocks(headptr, filePublicKey, fileDigiSigSK)
+		userlib.KeystoreSet(FILEKEY_PREFIX+metadata.Owner+metadata.Filename, filePublicKey)
+		userlib.KeystoreSet(FILE_DS_PREFIX+metadata.Owner+metadata.Filename, fileDSVerifyKey)
+		metadata.storeFileBlocks(headptr, filePublicKey, fileDSSignKey)
 
-
-		metadataJSON, err = json.Marshal(block)
-		record, err = randomizeEncryptAndSign(metadataJSON, filePK, fileDSSK)
-		key, err = makeDataStoreKey(METADATA_PREFIX + metadata.Owner + metadata.Filename)
+		metadataJSON, _ := json.Marshal(metadata)
+		record, _ := randomizeEncryptAndSign(metadataJSON, filePublicKey, fileDSSignKey)
+		key, _ := makeDataStoreKey(METADATA_PREFIX + metadata.Owner + metadata.Filename)
 		userlib.DatastoreSet(key, record)
 
-		userSignKey, userVerifyKey, err := userlib.DSKeyGen()
+		userSignKey, userVerifyKey, _ := userlib.DSKeyGen()
+		userlib.KeystoreSet(USER_DS_PREFIX+userdata.Username+metadata.Filename, userVerifyKey)
 
-		accessToken, err := randomizeEncryptAndSign(
-			json.Marshal([]userlib.PrivateKeyType{filePrivateKey, fileDigiSigSK}),
+		filePrivateKeyJSON, _ := json.Marshal(filePrivateKey)
+		fileDSSignKeyJSON, _ := json.Marshal(fileDSSignKey)
+		accessToken, _ := randomizeEncryptAndSign(
+			filePrivateKeyJSON,
 			userdata.PublicKey,
-			userSignKey
+			userSignKey,
 		)
 
-		key, err := makeDataStoreKey(ACCESS_TOKEN_PREFIX + metadata.Username + metadata.Usernam + metadata.Filename)
+		signingToken, _ := randomizeEncryptAndSign(
+			fileDSSignKeyJSON,
+			userdata.PublicKey,
+			userSignKey,
+		)
+
+		key, err = makeDataStoreKey(ACCESS_TOKEN_PREFIX + metadata.Owner + userdata.Username + metadata.Filename)
 		userlib.DatastoreSet(key, accessToken)
 
+		key, err = makeDataStoreKey(SIGNING_TOKEN_PREFIX + metadata.Owner + userdata.Username + metadata.Filename)
+		userlib.DatastoreSet(key, signingToken)
+
 	} else {
-		continue
+
 	}
-	//TODO: This is a toy implementation.
+	/* //TODO: This is a toy implementation.
 	UUID, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
 	packaged_data, _ := json.Marshal(data)
 	userlib.DatastoreSet(UUID, packaged_data)
-	//End of toy implementation
+	//End of toy implementation */
 
 	return
 }
