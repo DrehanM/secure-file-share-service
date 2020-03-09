@@ -40,6 +40,7 @@ const (
 	SALT_BYTES            = 16
 	USER_STRUCT_KEY_BYTES = 32
 	USER_STRUCT_IV_BYTES  = 16
+	BLOCK_STRUCT_IV_BYTES = 16
 
 	MAX_BLOCK_SIZE = 256
 
@@ -128,6 +129,23 @@ func makeDataStoreKey(keyData string) (key uuid.UUID, err error) {
 	}
 	key = bytesToUUID(hash)
 	return key, nil
+}
+
+func randomizeEncryptAndSign(contents byte[], publicKey userlib.PKEEncKey, signingKey userlib.DSSignKey) ([]byte, error) {
+	IV := userlib.RandomBytes(BLOCK_STRUCT_IV_BYTES)
+	message := append(IV, contents...)
+	ciphertext, err := userlib.PKEEnc(publicKey, message)
+
+	if err != nil {
+		return nil, err
+	}
+	record, err := signMessage(ciphertext, message, signingKey)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return record, nil
 }
 
 func min(a int, b int) (retval int) {
@@ -335,6 +353,17 @@ func constructFileBlocks(data []byte) (blockCount int, headptr *Block) {
 
 }
 
+func (metadata Metadata) storeFileBlocks(headptr *Block, filePK userlib.PublicKeyType, fileDSSK userlib.DSSignKey) {
+	var contents, ciphertext, IV, message, signedMessage record []byte
+	key userlib.UUID
+	for block := *headptr; block != nil; block = block.Next {
+		contents, err = json.Marshal(block)
+		record, err = randomizeEncrypeAndSign(contents, filePK, fileDSSK)
+		key, err = makeDataStoreKey(BLOCK_PREFIX + metadata.Owner + metadata.Filename + string(block.BlockID))
+		userlib.DatastoreSet(key, record)
+	}
+}
+
 // This stores a file in the datastore.
 //
 // The plaintext of the filename + the plaintext and length of the filename
@@ -364,11 +393,35 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 
 		blockCount, headptr := constructFileBlocks(data)
 
-		//TODO: iterate through block list,
-		//TODO: encrypt/store/sign file data
+		metadata.BlockCount = blockCount
+		metadata.Head = headptr
+
+		filePublicKey, filePrivateKey, err = userlib.PKEKeyGen()
+		fileDigiSigPK, fileDigiSigSK, err = userlib.DSKeyGen()
+
+		userlib.KeystoreSet(FILEKEY_PREFIX + metadata.Owner + metadata.Filename, filePublicKey)
+		userlib.KeystoreSet(FILE_DS_PREFIX + metadata.Owner + metadata.Filename, fileDigiSigPK)
+		metadata.storeFileBlocks(headptr, filePublicKey, fileDigiSigSK)
+
+
+		metadataJSON, err = json.Marshal(block)
+		record, err = randomizeEncryptAndSign(metadataJSON, filePK, fileDSSK)
+		key, err = makeDataStoreKey(METADATA_PREFIX + metadata.Owner + metadata.Filename)
+		userlib.DatastoreSet(key, record)
+
+		userSignKey, userVerifyKey, err := userlib.DSKeyGen()
+
+		accessToken, err := randomizeEncryptAndSign(
+			json.Marshal([]userlib.PrivateKeyType{filePrivateKey, fileDigiSigSK}),
+			userdata.PublicKey,
+			userSignKey
+		)
+
+		key, err := makeDataStoreKey(ACCESS_TOKEN_PREFIX + metadata.Username + metadata.Usernam + metadata.Filename)
+		userlib.DatastoreSet(key, accessToken)
 
 	} else {
-		// TODO: IF file exists
+		continue
 	}
 	//TODO: This is a toy implementation.
 	UUID, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
