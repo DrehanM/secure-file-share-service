@@ -54,10 +54,20 @@ func TestGetUser(t *testing.T) {
 	}
 	t.Log("Got user", u)
 
-	nu, err := GetUser("alice", "fubar")
-	t.Log("Got user again", nu)
+	u1, err := InitUser("alice1", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	t.Log("Got user", u1)
 
-	if err != nil || nu.Username != u.Username {
+	nu1, err := GetUser("alice", "fubar")
+	t.Log("Got user again", nu1)
+
+	nu2, err := GetUser("alice1", "fubar")
+	t.Log("Got user again", nu2)
+
+	if err != nil || nu1.Username != "alice" || nu2.Username != "alice1" {
 		t.Error("Failed to Get User")
 		return
 	}
