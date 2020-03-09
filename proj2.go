@@ -40,7 +40,6 @@ const (
 	SALT_BYTES            = 16
 	USER_STRUCT_KEY_BYTES = 32
 	USER_STRUCT_IV_BYTES  = 16
-<<<<<<< HEAD
 
 	MAX_BLOCK_SIZE = 256
 
@@ -52,9 +51,6 @@ const (
 	FILEKEY_PREFIX      = "filekey"
 	FILE_DS_PREFIX      = "file digisig"
 	USER_DS_PREFIX      = "user digisig"
-=======
-	ACCOUNT_INFO_PREFIX   = "account_info"
->>>>>>> a8f90477823fd751c650285d34f7a8dcdb4b1d12
 )
 
 // This serves two purposes:
@@ -134,10 +130,10 @@ func makeDataStoreKey(keyData string) (key uuid.UUID, err error) {
 	return key, nil
 }
 
-func min(int a, int b) (int) {
+func min(a int, b int) (retval int) {
 	if a < b {
 		return a
-	} 
+	}
 	return b
 }
 
@@ -155,23 +151,23 @@ type User struct {
 }
 
 type Sharetree struct {
-	Parent string
+	Parent   string
 	Children []string
 }
 
 type Block struct {
-	BlockID uint32
-	Contents [MAX_BLOCK_SIZE]byte
-	Next *Block
+	BlockID  uint32
+	Contents []byte
+	Next     *Block
 }
 
 type Metadata struct {
-	Owner string
-	Filename string
+	Owner      string
+	Filename   string
 	BlockCount uint32
-	Head *Block
-	Members []string
-	Sharetree []Sharetree
+	Head       *Block
+	Members    []string
+	Sharetree  []Sharetree
 }
 
 // This creates a user.  It will only be called once for a user
@@ -227,10 +223,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	//append ciphertext to signature
 	var dataToStore []byte = addSignatureToCipher(signature, cipher)
 
-<<<<<<< HEAD
-=======
 	//construct key user struct in dataStore
->>>>>>> a8f90477823fd751c650285d34f7a8dcdb4b1d12
 	var dataStoreKey string = ACCOUNT_INFO_PREFIX + userdata.Username
 	key, err := makeDataStoreKey(dataStoreKey)
 	if err != nil {
@@ -261,12 +254,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 func GetUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 
-<<<<<<< HEAD
 	key, err := makeDataStoreKey(ACCOUNT_INFO_PREFIX + username)
-=======
-	//construct key for user struct
-	key, err := makeDataStoreKey("account_info" + username)
->>>>>>> a8f90477823fd751c650285d34f7a8dcdb4b1d12
 	if err != nil {
 		return nil, err
 	}
@@ -277,12 +265,8 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		return nil, errors.New("username not found error")
 	}
 
-<<<<<<< HEAD
 	saltkey, err := makeDataStoreKey(SALT_PREFIX + username)
-=======
-	//construct key for the salt of the user
-	saltkey, err := makeDataStoreKey("salt" + username)
->>>>>>> a8f90477823fd751c650285d34f7a8dcdb4b1d12
+
 	if err != nil {
 		return nil, err
 	}
@@ -319,32 +303,38 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	return &userdata, nil
 }
 
-
 //Not tested yet.
-func constructFileBlocks(data []byte) (int, *Block) {
-	
-	head Block := {
-		BlockID 	: 0
-		Contents 	: data[:min(len(data), MAX_BLOCK_SIZE)]
-		Next 		: nil
+func constructFileBlocks(data []byte) (blockCount int, headptr *Block) {
+
+	head := Block{
+		BlockID:  0,
+		Contents: data[:min(len(data), MAX_BLOCK_SIZE)],
+		Next:     nil,
 	}
 
-	prev := head
-	var current Block
+	var prev Block = head
 
 	for i := MAX_BLOCK_SIZE; i < len(data); i += MAX_BLOCK_SIZE {
-		current := {
-			BlockID 	: i / MAX_BLOCK_SIZE
-			Contents 	: data[i:min(len(data), i+MAX_BLOCK_SIZE)]
-			Next		: nil
+		k := uint32(i)
+		current := Block{
+			BlockID:  k / MAX_BLOCK_SIZE,
+			Contents: data[k:min(len(data), i+MAX_BLOCK_SIZE)],
+			Next:     nil,
 		}
-		prev.Next := &current
-		prev := current
+
+		prev.Next = &current
+		prev = current
 	}
 
-	return len(data) / MAX_BLOCK_SIZE, &head
+	blockCount = len(data) / MAX_BLOCK_SIZE
+	if len(data)%MAX_BLOCK_SIZE > 0 {
+		blockCount++
+	}
+
+	return blockCount, &head
 
 }
+
 // This stores a file in the datastore.
 //
 // The plaintext of the filename + the plaintext and length of the filename
@@ -352,28 +342,30 @@ func constructFileBlocks(data []byte) (int, *Block) {
 func (userdata *User) StoreFile(filename string, data []byte) {
 
 	filekey, err := makeDataStoreKey(METADATA_PREFIX + userdata.Username + filename)
+	if err != nil {
+		return
+	}
 	metadataJSON, exists := userlib.DatastoreGet(filekey)
 	if !exists {
 
-		sharetree := Sharetree {
-			Parent		: userdata.Username,
-			Children	: string[]{}
-		}
-		
-		metadata := Metadata {
-			Owner		: userdata.Username,
-			Filename	: filename,
-			BlockCount	: 0,
-			Head		: nil,
-			Members		: []string{userdata.Username},
-			Sharetree	: sharetree
+		sharetree := Sharetree{
+			Parent:   userdata.Username,
+			Children: []string{},
 		}
 
-		blockCount, headptr = constructFileBlocks(data)
+		metadata := Metadata{
+			Owner:      userdata.Username,
+			Filename:   filename,
+			BlockCount: 0,
+			Head:       nil,
+			Members:    []string{userdata.Username},
+			Sharetree:  []Sharetree{sharetree},
+		}
+
+		blockCount, headptr := constructFileBlocks(data)
 
 		//TODO: iterate through block list,
 		//TODO: encrypt/store/sign file data
-
 
 	} else {
 		// TODO: IF file exists
