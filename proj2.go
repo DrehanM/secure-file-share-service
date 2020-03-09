@@ -123,12 +123,11 @@ func makeDataStoreKey(keyData string) (key uuid.UUID, err error) {
 
 // The structure definition for a user record
 type User struct {
-	Username            string
-	PrivateKey          userlib.PrivateKeyType
-	PublicKey           userlib.PublicKeyType
-	PrivateSignatureKey userlib.DSSignKey
-	PublicSignatureKey  userlib.DSVerifyKey
-	OwnedFiles          []string
+	Username   string
+	PrivateKey userlib.PrivateKeyType
+	PublicKey  userlib.PublicKeyType
+	SignMap    map[string]userlib.DSSignKey
+	OwnedFiles []string
 
 	// You can add other fields here if you want...
 	// Note for JSON to marshal/unmarshal, the fields need to
@@ -153,44 +152,57 @@ type User struct {
 func InitUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 
+	userdata.OwnedFiles = []string{}
+	userdata.SignMap = map[string]userlib.DSSignKey{}
 	userdata.Username = username
+
 	userdata.PublicKey, userdata.PrivateKey, err = userlib.PKEKeyGen()
 	if err != nil {
 		return nil, err
 	}
 
-	userdata.PrivateSignatureKey, userdata.PublicSignatureKey, err = userlib.DSKeyGen()
-	if err != nil {
-		return nil, err
-	}
-
-	userdata.OwnedFiles = []string{}
-
+	//generate salt for password
 	var salt []byte = userlib.RandomBytes(SALT_BYTES)
 
+	//generate key to be used for symmetric encryption of userdata struct
 	var symkey []byte = userlib.Argon2Key([]byte(password), salt, USER_STRUCT_KEY_BYTES)
 
 	var IV []byte = userlib.RandomBytes(USER_STRUCT_IV_BYTES)
 
+	//convert userdata to string
 	msg, err := json.Marshal(userdata)
 	if err != nil {
 		return nil, err
 	}
 
+	//generate ciphertext
 	var cipher []byte = userlib.SymEnc(symkey, IV, msg)
 
+	//generate HMAC signature
 	signature, err := userlib.HMACEval(symkey, msg)
 	if err != nil {
 		return nil, err
 	}
 
+	//append ciphertext to signature
 	var dataToStore []byte = addSignatureToCipher(signature, cipher)
 
+<<<<<<< HEAD
 	var dataStoreKey string = ACCOUNT_INFO_PREFIX + userdata.Username
 	key, err := makeDataStoreKey(dataStoreKey)
+=======
+	key, err := makeDataStoreKey("account_info" + userdata.Username)
+>>>>>>> 6c7d3bec90950732fd16a6ba55e7e6203ce2c862
 	if err != nil {
 		return nil, err
 	}
+
+	saltkey, err := makeDataStoreKey("salt" + userdata.Username)
+	if err != nil {
+		return nil, err
+	}
+
+	userlib.DebugMsg("%s", string(msg))
 
 	//Update keyStore
 	userlib.KeystoreSet(userdata.Username, userdata.PublicKey)
@@ -198,6 +210,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	//Update dataStore
 	userlib.DatastoreSet(key, dataToStore)
+	userlib.DatastoreSet(saltkey, salt)
 
 	return &userdata, nil
 }
@@ -207,9 +220,44 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 // data was corrupted, or if the user can't be found.
 func GetUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
-	userdataptr = &userdata
 
-	return userdataptr, nil
+	key, err := makeDataStoreKey("account_info" + username)
+	if err != nil {
+		return nil, err
+	}
+	data, exists := userlib.DatastoreGet(key)
+	if !exists {
+		userlib.DebugMsg("u:" + username + " p:" + password + "does not exist")
+		return nil, errors.New("username not found error")
+	}
+
+	saltkey, err := makeDataStoreKey("salt" + username)
+	if err != nil {
+		return nil, err
+	}
+	salt, exists := userlib.DatastoreGet(saltkey)
+	if !exists {
+		userlib.DebugMsg("u:" + username + "salt does not exist")
+		return nil, errors.New("salt not found error")
+	}
+	var symkey []byte = userlib.Argon2Key([]byte(password), salt, USER_STRUCT_KEY_BYTES)
+
+	var decrypted []byte = userlib.SymDec(symkey, data[64:])
+
+	hmac, err := userlib.HMACEval(symkey, decrypted)
+	if err != nil {
+		return nil, err
+	}
+
+	var hmacOld []byte = data[:64]
+
+	if !userlib.HMACEqual(hmac, hmacOld) {
+		return nil, errors.New("MAC doesn't match, user data has been tampered with")
+	}
+
+	json.Unmarshal(decrypted, &userdata)
+
+	return &userdata, nil
 }
 
 // This stores a file in the datastore.

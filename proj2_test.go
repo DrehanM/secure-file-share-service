@@ -4,15 +4,16 @@ package proj2
 // imports it will break the autograder, and we will be Very Upset.
 
 import (
-	"testing"
-	"reflect"
-	"github.com/cs161-staff/userlib"
-	_ "encoding/json"
 	_ "encoding/hex"
-	_ "github.com/google/uuid"
-	_ "strings"
+	_ "encoding/json"
 	_ "errors"
+	"reflect"
 	_ "strconv"
+	_ "strings"
+	"testing"
+
+	"github.com/cs161-staff/userlib"
+	_ "github.com/google/uuid"
 )
 
 func clear() {
@@ -39,6 +40,28 @@ func TestInit(t *testing.T) {
 	// If you want to comment the line above,
 	// write _ = u here to make the compiler happy
 	// You probably want many more tests here.
+}
+
+func TestGetUser(t *testing.T) {
+	clear()
+	t.Log("GetUser Test")
+	userlib.SetDebugStatus(true)
+
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	t.Log("Got user", u)
+
+	nu, err := GetUser("alice", "fubar")
+	t.Log("Got user again", nu)
+
+	if err != nil || nu.Username != u.Username {
+		t.Error("Failed to Get User")
+		return
+	}
+
 }
 
 func TestStorage(t *testing.T) {
@@ -78,7 +101,6 @@ func TestInvalidFile(t *testing.T) {
 	}
 }
 
-
 func TestShare(t *testing.T) {
 	clear()
 	u, err := InitUser("alice", "fubar")
@@ -94,7 +116,7 @@ func TestShare(t *testing.T) {
 
 	v := []byte("This is a test")
 	u.StoreFile("file1", v)
-	
+
 	var v2 []byte
 	var magic_string string
 
