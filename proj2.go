@@ -7,6 +7,8 @@ package proj2
 import (
 	// You neet to add with
 	// go get github.com/cs161-staff/userlib
+	"fmt"
+
 	"github.com/cs161-staff/userlib"
 
 	// Life is much easier with json:  You are
@@ -41,18 +43,20 @@ const (
 	USER_STRUCT_KEY_BYTES = 32
 	USER_STRUCT_IV_BYTES  = 16
 	BLOCK_STRUCT_IV_BYTES = 16
+	RSA_SIGN_BYTES        = 256
 
 	MAX_BLOCK_SIZE = 256
 
-	ACCOUNT_INFO_PREFIX  = "account_info"
-	SALT_PREFIX          = "salt"
-	BLOCK_PREFIX         = "block"
-	METADATA_PREFIX      = "metadata"
-	ACCESS_TOKEN_PREFIX  = "access_token"
-	SIGNING_TOKEN_PREFIX = "signing_token"
-	FILEKEY_PREFIX       = "filekey"
-	FILE_DS_PREFIX       = "file digisig"
-	USER_DS_PREFIX       = "user digisig"
+	ACCOUNT_INFO_PREFIX    = "account_info"
+	SALT_PREFIX            = "salt"
+	BLOCK_PREFIX           = "block"
+	METADATA_PREFIX        = "metadata"
+	ACCESS_TOKEN_PREFIX    = "access_token"
+	SIGNING_TOKEN_PREFIX   = "signing_token"
+	FILE_INFO_TOKEN_PREFIX = "fileid_token"
+	FILEKEY_PREFIX         = "filekey"
+	FILE_DS_PREFIX         = "file digisig"
+	USER_DS_PREFIX         = "user digisig"
 )
 
 // This serves two purposes:
@@ -108,6 +112,7 @@ func addSignatureToCipher(signature []byte, cipher []byte) (data []byte) {
 func signMessage(cipher []byte, message []byte, key userlib.DSSignKey) (data []byte, err error) {
 	signature, err := userlib.DSSign(key, message)
 	if err != nil {
+		fmt.Printf("%s\n", err)
 		return nil, err
 	}
 	data = addSignatureToCipher(signature, cipher)
@@ -117,6 +122,7 @@ func signMessage(cipher []byte, message []byte, key userlib.DSSignKey) (data []b
 func hash(data []byte) (hash []byte, err error) {
 	hash, err = userlib.HMACEval(make([]byte, 16), data)
 	if err != nil {
+		fmt.Printf("%s\n", err)
 		return nil, err
 	}
 	return hash, nil
@@ -126,27 +132,62 @@ func makeDataStoreKey(keyData string) (key uuid.UUID, err error) {
 	var keyDatabytes []byte = []byte(keyData)
 	hash, err := hash(keyDatabytes)
 	if err != nil {
+		fmt.Printf("%s\n", err)
 		return uuid.Nil, err
 	}
 	key = bytesToUUID(hash)
 	return key, nil
 }
 
-func randomizeEncryptAndSign(contents []byte, publicKey userlib.PKEEncKey, signingKey userlib.DSSignKey) ([]byte, error) {
+func makeDataStoreKeyAll(parts ...string) (key uuid.UUID, err error) {
+	var concat string
+
+	for _, part := range parts {
+		hash, _ := makeDataStoreKey(part)
+		concat += strings.ReplaceAll(hash.String(), "-", "")
+	}
+
+	return makeDataStoreKey(concat)
+}
+
+func encryptAndSign(contents []byte, publicKey userlib.PKEEncKey, signingKey userlib.DSSignKey) ([]byte, error) {
 	IV := userlib.RandomBytes(BLOCK_STRUCT_IV_BYTES)
 	message := append(IV, contents...)
 	ciphertext, err := userlib.PKEEnc(publicKey, message)
 
 	if err != nil {
+		fmt.Printf("%d\n", len(message))
+		fmt.Printf("%s\n", err)
 		return nil, err
 	}
 	record, err := signMessage(ciphertext, message, signingKey)
 
 	if err != nil {
+		fmt.Printf("%s\n", err)
 		return nil, err
 	}
 
 	return record, nil
+}
+
+func decryptAndVerify(contents []byte, v interface{}, privateKey userlib.PKEDecKey, verifyKey userlib.DSVerifyKey) (err error) {
+	fmt.Printf("%08b\n", contents)
+	signature := contents[:RSA_SIGN_BYTES]
+	ciphertext := contents[:RSA_SIGN_BYTES]
+	message, _ := userlib.PKEDec(privateKey, ciphertext)
+
+	err = userlib.DSVerify(verifyKey, message, signature)
+	if err != nil {
+		fmt.Printf("%s\n", err)
+		return err
+	}
+
+	err = json.Unmarshal(message[BLOCK_STRUCT_IV_BYTES:], &v)
+	if err != nil {
+		userlib.DebugMsg("Unmarshal failed")
+		return err
+	}
+	return nil
 }
 
 func min(a int, b int) (retval int) {
@@ -213,6 +254,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	userdata.PublicKey, userdata.PrivateKey, err = userlib.PKEKeyGen()
 	if err != nil {
+		fmt.Printf("%s\n", err)
 		return nil, err
 	}
 
@@ -227,6 +269,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	//convert userdata to string
 	msg, err := json.Marshal(userdata)
 	if err != nil {
+		fmt.Printf("%s\n", err)
 		return nil, err
 	}
 
@@ -236,6 +279,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	//generate HMAC signature
 	signature, err := userlib.HMACEval(symkey, msg)
 	if err != nil {
+		fmt.Printf("%s\n", err)
 		return nil, err
 	}
 
@@ -243,15 +287,16 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	var dataToStore []byte = addSignatureToCipher(signature, cipher)
 
 	//construct key user struct in dataStore
-	var dataStoreKey string = ACCOUNT_INFO_PREFIX + userdata.Username
-	key, err := makeDataStoreKey(dataStoreKey)
+	key, err := makeDataStoreKeyAll(ACCOUNT_INFO_PREFIX, userdata.Username)
 	if err != nil {
+		fmt.Printf("%s\n", err)
 		return nil, err
 	}
 
 	//construct key for salt in dataStore
-	saltkey, err := makeDataStoreKey("salt" + userdata.Username)
+	saltkey, err := makeDataStoreKeyAll(SALT_PREFIX, userdata.Username)
 	if err != nil {
+		fmt.Printf("%s\n", err)
 		return nil, err
 	}
 
@@ -273,7 +318,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 func GetUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 
-	key, err := makeDataStoreKey(ACCOUNT_INFO_PREFIX + username)
+	key, err := makeDataStoreKeyAll(ACCOUNT_INFO_PREFIX, username)
 	if err != nil {
 		return nil, err
 	}
@@ -284,7 +329,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 		return nil, errors.New("username not found error")
 	}
 
-	saltkey, err := makeDataStoreKey(SALT_PREFIX + username)
+	saltkey, err := makeDataStoreKeyAll(SALT_PREFIX, username)
 
 	if err != nil {
 		return nil, err
@@ -361,11 +406,11 @@ func (metadata Metadata) storeFileBlocks(headptr *Block, filePK userlib.PublicKe
 		if err != nil {
 			return err
 		}
-		record, err := randomizeEncryptAndSign(contents, filePK, fileDSSK)
+		record, err := encryptAndSign(contents, filePK, fileDSSK)
 		if err != nil {
 			return err
 		}
-		key, err := makeDataStoreKey(BLOCK_PREFIX + metadata.Owner + metadata.Filename + string(block.BlockID))
+		key, err := makeDataStoreKeyAll(BLOCK_PREFIX, metadata.Owner, metadata.Filename, string(block.BlockID))
 		if err != nil {
 			return err
 		}
@@ -380,7 +425,7 @@ func (metadata Metadata) storeFileBlocks(headptr *Block, filePK userlib.PublicKe
 // should NOT be revealed to the datastore!
 func (userdata *User) StoreFile(filename string, data []byte) {
 
-	filekey, err := makeDataStoreKey(METADATA_PREFIX + userdata.Username + filename)
+	filekey, err := makeDataStoreKeyAll(METADATA_PREFIX, userdata.Username, filename)
 	if err != nil {
 		return
 	}
@@ -415,8 +460,8 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 		metadata.storeFileBlocks(headptr, filePublicKey, fileDSSignKey)
 
 		metadataJSON, _ := json.Marshal(metadata)
-		record, _ := randomizeEncryptAndSign(metadataJSON, filePublicKey, fileDSSignKey)
-		key, _ := makeDataStoreKey(METADATA_PREFIX + metadata.Owner + metadata.Filename)
+		record, _ := encryptAndSign(metadataJSON, filePublicKey, fileDSSignKey)
+		key, _ := makeDataStoreKeyAll(METADATA_PREFIX, metadata.Owner, metadata.Filename)
 		userlib.DatastoreSet(key, record)
 
 		userSignKey, userVerifyKey, _ := userlib.DSKeyGen()
@@ -424,23 +469,34 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 
 		filePrivateKeyJSON, _ := json.Marshal(filePrivateKey)
 		fileDSSignKeyJSON, _ := json.Marshal(fileDSSignKey)
-		accessToken, _ := randomizeEncryptAndSign(
+		accessToken, _ := encryptAndSign(
 			filePrivateKeyJSON,
 			userdata.PublicKey,
 			userSignKey,
 		)
 
-		signingToken, _ := randomizeEncryptAndSign(
+		signingToken, _ := encryptAndSign(
 			fileDSSignKeyJSON,
 			userdata.PublicKey,
 			userSignKey,
 		)
 
-		key, err = makeDataStoreKey(ACCESS_TOKEN_PREFIX + metadata.Owner + userdata.Username + metadata.Filename)
+		fileInfoToken, _ := json.Marshal([]string{metadata.Owner, metadata.Filename})
+
+		key, err = makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, userdata.Username, metadata.Filename)
 		userlib.DatastoreSet(key, accessToken)
 
-		key, err = makeDataStoreKey(SIGNING_TOKEN_PREFIX + metadata.Owner + userdata.Username + metadata.Filename)
+		key, err = makeDataStoreKeyAll(SIGNING_TOKEN_PREFIX, userdata.Username, metadata.Filename)
 		userlib.DatastoreSet(key, signingToken)
+
+		key, err = makeDataStoreKeyAll(FILE_INFO_TOKEN_PREFIX, userdata.Username, metadata.Filename)
+		userlib.DatastoreSet(key, fileInfoToken)
+
+		userdata.OwnedFiles = append(userdata.OwnedFiles, metadata.Filename)
+
+		userJSON, _ := json.Marshal(userdata)
+		userUUID, _ := makeDataStoreKeyAll(ACCOUNT_INFO_PREFIX, userdata.Username)
+		userlib.DatastoreSet(userUUID, userJSON)
 
 	} else {
 
@@ -460,7 +516,7 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 // existing file, but only whatever additional information and
 // metadata you need.
 func (userdata *User) AppendFile(filename string, data []byte) (err error) {
-	return
+	return errors.New("Not implemented.")
 }
 
 // This loads a file from the Datastore.
@@ -468,7 +524,55 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 // It should give an error if the file is corrupted in any way.
 func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 
-	//TODO: This is a toy implementation.
+	accessTokenKey, _ := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, userdata.Username, filename)
+
+	accessToken, ok := userlib.DatastoreGet(accessTokenKey)
+	fmt.Printf("%s\n", accessToken)
+	if !ok {
+		userlib.DebugMsg("u:" + userdata.Username + " does not have access any file named f:" + filename)
+		return nil, errors.New("username not found error")
+	}
+
+	fileInfoTokenKey, _ := makeDataStoreKeyAll(FILE_INFO_TOKEN_PREFIX, userdata.Username, filename)
+
+	fileInfoToken, _ := userlib.DatastoreGet(fileInfoTokenKey)
+
+	var filePrivateKey userlib.PKEDecKey
+	var ownerAndFilename []string
+
+	userVerifyKey, _ := userlib.KeystoreGet(USER_DS_PREFIX + userdata.Username + filename)
+
+	err = decryptAndVerify(accessToken, filePrivateKey, userdata.PrivateKey, userVerifyKey)
+	if err != nil {
+		return nil, errors.New("Digital Signature doesn't match, u:" + userdata.Username + "'s access token has been tampered with")
+	}
+
+	err = decryptAndVerify(fileInfoToken, ownerAndFilename, userdata.PrivateKey, userVerifyKey)
+	if err != nil {
+		return nil, errors.New("Digital Signature doesn't match, u:" + userdata.Username + "'s info token has been tampered with")
+	}
+
+	fileVerifyKey, _ := userlib.KeystoreGet(FILE_DS_PREFIX + ownerAndFilename[0] + ownerAndFilename[1])
+
+	var key userlib.UUID
+	var metadata Metadata
+
+	key, _ = makeDataStoreKeyAll(METADATA_PREFIX, ownerAndFilename[0], ownerAndFilename[1])
+	metadataJSON, _ := userlib.DatastoreGet(key)
+	err = decryptAndVerify(metadataJSON, metadata, filePrivateKey, fileVerifyKey)
+
+	var blocks []byte
+	var blockJSON []byte
+
+	for i := 0; i < int(metadata.BlockCount); i++ {
+		var block Block
+		key, _ = makeDataStoreKeyAll(BLOCK_PREFIX, metadata.Owner, metadata.Filename, string(i))
+		blockJSON, _ = userlib.DatastoreGet(key)
+		err = decryptAndVerify(blockJSON, block, filePrivateKey, fileVerifyKey)
+		blocks = append(blocks, block.Contents...)
+	}
+
+	/*//TODO: This is a toy implementation.
 	UUID, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
 	packaged_data, ok := userlib.DatastoreGet(UUID)
 	if !ok {
@@ -476,9 +580,9 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 	}
 	json.Unmarshal(packaged_data, &data)
 	return data, nil
-	//End of toy implementation
+	//End of toy implementation*/
 
-	return
+	return blocks, nil
 }
 
 // This creates a sharing record, which is a key pointing to something
