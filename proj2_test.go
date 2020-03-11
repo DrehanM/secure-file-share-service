@@ -168,3 +168,47 @@ func TestConstructFileBlocks(t *testing.T) {
 		t.Logf("blockCount:%d", blockCount)
 	}
 }
+
+func TestRevokeAllChildren(t *testing.T) {
+
+	alicebranch := Sharebranch{
+		Parent:   "alice",
+		Children: []string{"bob", "charlie"},
+	}
+	bobbranch := Sharebranch{
+		Parent:   "bob",
+		Children: []string{"david"},
+	}
+	charliebranch := Sharebranch{
+		Parent:   "charlie",
+		Children: []string{"eric", "fred"},
+	}
+	davidbranch := Sharebranch{
+		Parent:   "david",
+		Children: []string{"george"},
+	}
+	ericbranch := Sharebranch{
+		Parent:   "eric",
+		Children: []string{},
+	}
+	fredbranch := Sharebranch{
+		Parent:   "fred",
+		Children: []string{},
+	}
+	georgebranch := Sharebranch{
+		Parent:   "george",
+		Children: []string{},
+	}
+
+	var dummyMetadata Metadata
+	dummyMetadata.Sharetree = []Sharebranch{alicebranch, bobbranch, charliebranch, davidbranch, ericbranch, fredbranch, georgebranch}
+
+	dummyMetadata.Sharetree = RevokeAllChildren(dummyMetadata.Sharetree, "bob")
+
+	expectedRemaining := []string{"alice", "charlie", "eric", "fred"}
+	for i := 0; i < len(dummyMetadata.Sharetree); i++ {
+		if dummyMetadata.Sharetree[i].Parent != expectedRemaining[i] {
+			t.Error("Did not revoke correctly", dummyMetadata.Sharetree, expectedRemaining)
+		}
+	}
+}

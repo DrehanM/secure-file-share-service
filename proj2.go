@@ -308,7 +308,8 @@ type User struct {
 	// be public (start with a capital letter)
 }
 
-type Sharetree struct {
+type Sharebranch struct {
+	Filename string
 	Parent   string
 	Children []string
 }
@@ -324,8 +325,7 @@ type Metadata struct {
 	Filename   string
 	BlockCount uint32
 	Head       *Block
-	Members    []string
-	Sharetree  []Sharetree
+	Sharetree  []Sharebranch
 }
 
 type AccessToken struct {
@@ -529,7 +529,8 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 
 	if !exists {
 
-		sharetree := Sharetree{
+		sharebranch := Sharebranch{
+			Filename: filename,
 			Parent:   userdata.Username,
 			Children: []string{},
 		}
@@ -538,8 +539,7 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 			Owner:      userdata.Username,
 			Filename:   filename,
 			BlockCount: 0,
-			Members:    []string{userdata.Username},
-			Sharetree:  []Sharetree{sharetree},
+			Sharetree:  []Sharebranch{sharebranch},
 		}
 
 		blockCount, headptr := constructFileBlocks(data)
@@ -639,8 +639,7 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 // information about what the sender calls the file.  Only the
 // recipient can access the sharing record, and only the recipient
 // should be able to know the sender.
-func (userdata *User) ShareFile(filename string, recipient string) (
-	magic_string string, err error) {
+func (userdata *User) ShareFile(filename string, recipient string) (magicString string, err error) {
 
 	return
 }
@@ -649,12 +648,97 @@ func (userdata *User) ShareFile(filename string, recipient string) (
 // The recipient should not be able to discover the sender's view on
 // what the filename even is!  However, the recipient must ensure that
 // it is authentically from the sender.
-func (userdata *User) ReceiveFile(filename string, sender string,
-	magic_string string) error {
+func (userdata *User) ReceiveFile(filename string, sender string, magicString string) error {
 	return nil
 }
 
 // Removes target user's access.
-func (userdata *User) RevokeFile(filename string, target_username string) (err error) {
-	return
+func (userdata *User) RevokeFile(filename string, targetUsername string) (err error) {
+	var accessToken AccessToken
+
+	err = loadAccessToken(&accessToken, userdata.Username, filename, userdata.PrivateKey)
+	if err != nil {
+		return err
+	}
+
+	var metadata Metadata
+
+	err = loadMetaData(&metadata, &accessToken)
+
+	if err != nil {
+		return err
+	}
+
+	if metadata.Owner != userdata.Username {
+		return errors.new("Cannot revoke file. User is not owner of file.")
+	}
+
+	newSharetree := RevokeAllChildren(metadata.Sharetree, targetUsername)
+
+	data, _ := userdata.LoadFile(filename)
+	userdata.StoreFile(filename, data)
+
+	err = loadAccessToken(&accessToken, userdata.Username, filename, userdata.PrivateKey)
+	err = loadMetaData(&metadata, &accessToken)
+
+	metadata.Sharetree = newSharetree
+
+	metadataRecord, _ := encryptAndMAC(metadata, accessToken.FileKey)
+	metaDataKey, err := makeDataStoreKeyAll(METADATA_PREFIX, userdata.Username, filename)
+	userlib.DatastoreSet(metaDataKey, metadataRecord)
+
+	userSignKey, userVerifyKey, _ := userlib.DSKeyGen()
+
+	for _, branch := range newSharetree {
+		recipientPublicKey := userlib.KeystoreGet(branch.Parent)
+		accessTokenRecord, _ := encryptAndSign(
+			accessToken,
+			recipientPublicKey,
+			userSignKey,
+		)
+
+		accessTokenKey, _ := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, branch.Parent, branch.Filename)
+		userlib.DatastoreSet(accessTokenKey, accessTokenRecord)
+	}
+
+	return nil
+
+}
+
+func RevokeAllChildren(sharetree []Sharebranch, targetParent string) []Sharebranch {
+	var lostChildren, queue []string
+	var target string
+	for queue = []string{targetParent}; len(queue) > 0; {
+		if len(queue) > 1 {
+			target, queue = queue[0], queue[1:]
+		} else {
+			target, queue = queue[0], []string{}
+		}
+		sharetree, lostChildren = removeBranch(sharetree, target)
+		queue = append(queue, lostChildren...)
+	}
+	return sharetree
+
+}
+
+func removeBranch(sharetree []Sharebranch, targetParent string) (trimmedSharetree []Sharebranch, lostChildren []string) {
+	var curBranch Sharebranch
+	for i := 0; i < len(sharetree); i++ {
+		curBranch = sharetree[i]
+		if curBranch.Parent == targetParent {
+			if i < len(sharetree)-1 {
+				return append(sharetree[:i], sharetree[i+1:]...), curBranch.Children
+			} else {
+				return sharetree[:i], curBranch.Children
+			}
+		}
+	}
+	return sharetree, nil
+}
+
+func getParentNames(sharetree []Sharebranch) (names []string) {
+	for _, branch := range sharetree {
+		names = append(names, branch.Parent)
+	}
+	return names
 }
