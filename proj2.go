@@ -233,11 +233,19 @@ func decryptAndVerifyAccessToken(contents []byte, accessToken *AccessToken, priv
 
 	err = userlib.DSVerify(verifyKey, message, signature)
 	if err != nil {
-		return err
+		//Token may have changed and is now signed by owner
+		err = json.Unmarshal(message, accessToken)
+		ownerVerifyKey, ok := userlib.KeystoreGet(USER_DS_PREFIX + accessToken.OwnerUsername + accessToken.Filename)
+		if !ok {
+			return errors.New("could not get owner verify key from keystore")
+		}
+		err = userlib.DSVerify(ownerVerifyKey, message, signature)
+		if err != nil {
+			return errors.New("access token has been tampered with")
+		}
+		return nil
 	}
-
 	err = json.Unmarshal(message, accessToken)
-
 	return nil
 }
 
@@ -248,21 +256,21 @@ func min(a int, b int) (retval int) {
 	return b
 }
 
-func loadAccessToken(accessToken *AccessToken, username string, filename string, privateKey userlib.PKEDecKey) (err error) {
+func loadAccessToken(accessToken *AccessToken, username string, filename string, privateKey userlib.PKEDecKey) (exists bool, err error) {
 	accessTokenKey, _ := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, username, filename)
 	accessTokenRecord, ok := userlib.DatastoreGet(accessTokenKey)
 	if !ok {
-		return errors.New("access token not found error")
+		return false, errors.New("access token not found error")
 	}
 
 	userVerifyKey, _ := userlib.KeystoreGet(USER_DS_PREFIX + username + filename)
 
 	err = decryptAndVerifyAccessToken(accessTokenRecord, accessToken, privateKey, userVerifyKey)
 	if err != nil {
-		return err
+		return true, err
 	}
 
-	return nil
+	return true, nil
 
 }
 
@@ -300,7 +308,7 @@ type User struct {
 	Username   string
 	PrivateKey userlib.PrivateKeyType
 	PublicKey  userlib.PublicKeyType
-	SignMap    map[string]userlib.DSSignKey
+	SignKey    userlib.DSSignKey
 	OwnedFiles []string
 
 	// You can add other fields here if you want...
@@ -353,7 +361,6 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 
 	userdata.OwnedFiles = []string{}
-	userdata.SignMap = map[string]userlib.DSSignKey{}
 	userdata.Username = username
 
 	userdata.PublicKey, userdata.PrivateKey, err = userlib.PKEKeyGen()
@@ -521,14 +528,11 @@ func (metadata Metadata) storeFileBlocks(headptr *Block, fileKey []byte) (err er
 func (userdata *User) StoreFile(filename string, data []byte) {
 
 	//construct key for metadata in dataStore
-	metaDataKey, err := makeDataStoreKeyAll(METADATA_PREFIX, userdata.Username, filename)
-	if err != nil {
-		return
-	}
-	_, exists := userlib.DatastoreGet(metaDataKey)
+	var accessToken AccessToken
+
+	exists, _ := loadAccessToken(&accessToken, userdata.Username, filename, userdata.PrivateKey)
 
 	if !exists {
-
 		sharebranch := Sharebranch{
 			Filename: filename,
 			Parent:   userdata.Username,
@@ -550,6 +554,7 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 
 		metadata.storeFileBlocks(headptr, fileKey)
 
+		metaDataKey, _ := makeDataStoreKeyAll(METADATA_PREFIX, userdata.Username, filename)
 		metaDataRecord, _ := encryptAndMAC(metadata, fileKey)
 		userlib.DatastoreSet(metaDataKey, metaDataRecord)
 
@@ -572,14 +577,19 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 		userlib.DatastoreSet(accessTokenKey, accessTokenRecord)
 
 	} else {
+		var metadata Metadata
 
-		// var metadata Metadata
-		// metaDataRecord, _ := userlib.DatastoreGet(metaDataKey)
+		loadMetaData(&metadata, &accessToken)
 
-		// err = decryptAndMACEvalMetaData(metaDataRecord, &metadata, accessToken.FileKey)
-		// if err != nil {
-		// 	return nil, err
-		// }
+		blockCount, headptr := constructFileBlocks(data)
+
+		metadata.BlockCount = blockCount
+
+		metadata.storeFileBlocks(headptr, accessToken.FileKey)
+
+		metaDataKey, _ := makeDataStoreKeyAll(METADATA_PREFIX, accessToken.OwnerUsername, accessToken.Filename)
+		metaDataRecord, _ := encryptAndMAC(metadata, accessToken.FileKey)
+		userlib.DatastoreSet(metaDataKey, metaDataRecord)
 
 	}
 
@@ -603,9 +613,13 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 
 	var accessToken AccessToken
 
-	err = loadAccessToken(&accessToken, userdata.Username, filename, userdata.PrivateKey)
+	exists, err := loadAccessToken(&accessToken, userdata.Username, filename, userdata.PrivateKey)
 	if err != nil {
 		return nil, err
+	}
+
+	if !exists {
+		return nil, errors.New("no such file:" + filename + " for user:" + userdata.Username)
 	}
 
 	var metadata Metadata
@@ -656,9 +670,14 @@ func (userdata *User) ReceiveFile(filename string, sender string, magicString st
 func (userdata *User) RevokeFile(filename string, targetUsername string) (err error) {
 	var accessToken AccessToken
 
-	err = loadAccessToken(&accessToken, userdata.Username, filename, userdata.PrivateKey)
+	exists, err := loadAccessToken(&accessToken, userdata.Username, filename, userdata.PrivateKey)
+
 	if err != nil {
 		return err
+	}
+
+	if !exists {
+		return errors.New("no such file:" + filename + " for user:" + userdata.Username)
 	}
 
 	var metadata Metadata
@@ -670,36 +689,21 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 	}
 
 	if metadata.Owner != userdata.Username {
-		return errors.new("Cannot revoke file. User is not owner of file.")
+		return errors.New("cannot revoke file because user is not owner of file")
 	}
 
 	newSharetree := RevokeAllChildren(metadata.Sharetree, targetUsername)
-
-	data, _ := userdata.LoadFile(filename)
-	userdata.StoreFile(filename, data)
-
-	err = loadAccessToken(&accessToken, userdata.Username, filename, userdata.PrivateKey)
-	err = loadMetaData(&metadata, &accessToken)
-
 	metadata.Sharetree = newSharetree
 
-	metadataRecord, _ := encryptAndMAC(metadata, accessToken.FileKey)
-	metaDataKey, err := makeDataStoreKeyAll(METADATA_PREFIX, userdata.Username, filename)
-	userlib.DatastoreSet(metaDataKey, metadataRecord)
+	data, _ := userdata.LoadFile(filename)
 
-	userSignKey, userVerifyKey, _ := userlib.DSKeyGen()
+	err = reissueNewTokens(*userdata, metadata)
 
-	for _, branch := range newSharetree {
-		recipientPublicKey := userlib.KeystoreGet(branch.Parent)
-		accessTokenRecord, _ := encryptAndSign(
-			accessToken,
-			recipientPublicKey,
-			userSignKey,
-		)
-
-		accessTokenKey, _ := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, branch.Parent, branch.Filename)
-		userlib.DatastoreSet(accessTokenKey, accessTokenRecord)
+	if err != nil {
+		return err
 	}
+
+	userdata.StoreFile(filename, data)
 
 	return nil
 
@@ -741,4 +745,33 @@ func getParentNames(sharetree []Sharebranch) (names []string) {
 		names = append(names, branch.Parent)
 	}
 	return names
+}
+
+func reissueNewTokens(ownerdata User, metadata Metadata) error {
+
+	newFileKey := userlib.RandomBytes(FILE_KEY_SIZE)
+	newAccessToken := AccessToken{
+		FileKey:       newFileKey,
+		OwnerUsername: metadata.Owner,
+		Filename:      metadata.Filename,
+	}
+
+	ownerSignKey := ownerdata.SignKey
+
+	for _, branch := range metadata.Sharetree {
+		shareePublicKey, exists := userlib.KeystoreGet(branch.Parent)
+		if !exists {
+			return errors.New("could not find u:" + branch.Parent + "'s public key in keystore")
+		}
+		accessTokenRecord, err := encryptAndSign(newAccessToken, shareePublicKey, ownerSignKey)
+		if err != nil {
+			return err
+		}
+		accessTokenKey, err := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, branch.Parent, branch.Filename)
+		if err != nil {
+			return err
+		}
+		userlib.DatastoreSet(accessTokenKey, accessTokenRecord)
+	}
+	return nil
 }
