@@ -249,6 +249,26 @@ func decryptAndVerifyAccessToken(contents []byte, accessToken *AccessToken, priv
 	return nil
 }
 
+func decryptAndVerifyAccessTokenRecipient(contents []byte, accessToken *AccessToken, privateKey userlib.PKEDecKey, sender string) (err error) {
+	signature := contents[:RSA_SIGN_BYTES]
+	ciphertext := contents[RSA_SIGN_BYTES:]
+	message, _ := userlib.PKEDec(privateKey, ciphertext)
+
+	verifyKey, ok := userlib.KeystoreGet(USER_DS_PREFIX + sender)
+	if !ok {
+		return errors.New("owner's public verify key not found in keystore")
+	}
+
+	err = userlib.DSVerify(verifyKey, message, signature)
+	if err != nil {
+		return err
+	}
+
+	err = json.Unmarshal(message, accessToken)
+
+	return nil
+}
+
 func min(a int, b int) (retval int) {
 	if a < b {
 		return a
@@ -263,7 +283,7 @@ func loadAccessToken(accessToken *AccessToken, username string, filename string,
 		return false, errors.New("access token not found error")
 	}
 
-	userVerifyKey, _ := userlib.KeystoreGet(USER_DS_PREFIX + username + filename)
+	userVerifyKey, _ := userlib.KeystoreGet(USER_DS_PREFIX + username)
 
 	err = decryptAndVerifyAccessToken(accessTokenRecord, accessToken, privateKey, userVerifyKey)
 	if err != nil {
@@ -406,6 +426,11 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 		return nil, err
 	}
 
+	var userVerifyKey userlib.DSVerifyKey
+
+	userdata.SignKey, userVerifyKey, _ = userlib.DSKeyGen()
+	userlib.KeystoreSet(USER_DS_PREFIX+userdata.Username, userVerifyKey)
+
 	//userlib.DebugMsg("%s", string(msg))
 
 	//Update keyStore
@@ -474,10 +499,10 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 }
 
 //Not tested yet.
-func constructFileBlocks(data []byte) (blockCount uint32, headptr *Block) {
+func constructFileBlocks(startID uint32, data []byte) (blockCount uint32, headptr *Block) {
 
 	head := Block{
-		BlockID:  0,
+		BlockID:  startID,
 		Contents: data[:min(len(data), MAX_BLOCK_SIZE)],
 		Next:     nil,
 	}
@@ -487,7 +512,7 @@ func constructFileBlocks(data []byte) (blockCount uint32, headptr *Block) {
 	for i := MAX_BLOCK_SIZE; i < len(data); i += MAX_BLOCK_SIZE {
 		k := uint32(i)
 		current := Block{
-			BlockID:  k / MAX_BLOCK_SIZE,
+			BlockID:  startID + k/MAX_BLOCK_SIZE,
 			Contents: data[k:min(len(data), i+MAX_BLOCK_SIZE)],
 			Next:     nil,
 		}
@@ -546,7 +571,7 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 			Sharetree:  []Sharebranch{sharebranch},
 		}
 
-		blockCount, headptr := constructFileBlocks(data)
+		blockCount, headptr := constructFileBlocks(0, data)
 
 		metadata.BlockCount = blockCount
 
@@ -558,9 +583,6 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 		metaDataRecord, _ := encryptAndMAC(metadata, fileKey)
 		userlib.DatastoreSet(metaDataKey, metaDataRecord)
 
-		userSignKey, userVerifyKey, _ := userlib.DSKeyGen()
-		userlib.KeystoreSet(USER_DS_PREFIX+userdata.Username+metadata.Filename, userVerifyKey)
-
 		accessToken := AccessToken{
 			FileKey:       fileKey,
 			OwnerUsername: metadata.Owner,
@@ -570,7 +592,7 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 		accessTokenRecord, _ := encryptAndSign(
 			accessToken,
 			userdata.PublicKey,
-			userSignKey,
+			userdata.SignKey,
 		)
 
 		accessTokenKey, _ := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, userdata.Username, metadata.Filename)
@@ -602,7 +624,36 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 // existing file, but only whatever additional information and
 // metadata you need.
 func (userdata *User) AppendFile(filename string, data []byte) (err error) {
-	return errors.New("Not implemented.")
+
+	var accessToken AccessToken
+
+	err = loadAccessToken(&accessToken, userdata.Username, filename, userdata.PrivateKey)
+	if err != nil {
+		return err
+	}
+
+	var metadata Metadata
+
+	err = loadMetaData(&metadata, &accessToken)
+	if err != nil {
+		return err
+	}
+
+	blockCount, head := constructFileBlocks(metadata.BlockCount, data)
+
+	metadata.BlockCount += blockCount
+
+	metadata.storeFileBlocks(head, accessToken.FileKey)
+
+	metaDataRecord, _ := encryptAndMAC(metadata, accessToken.FileKey)
+	metaDataKey, err := makeDataStoreKeyAll(METADATA_PREFIX, userdata.Username, filename)
+	if err != nil {
+		return
+	}
+	userlib.DatastoreSet(metaDataKey, metaDataRecord)
+
+	return nil
+
 }
 
 // This loads a file from the Datastore.
@@ -654,8 +705,26 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 // recipient can access the sharing record, and only the recipient
 // should be able to know the sender.
 func (userdata *User) ShareFile(filename string, recipient string) (magicString string, err error) {
+	var ownerAccessToken AccessToken
 
-	return
+	err = loadAccessToken(&ownerAccessToken, userdata.Username, filename, userdata.PrivateKey)
+	if err != nil {
+		return "", err
+	}
+
+	var recipientAccessToken AccessToken = ownerAccessToken
+
+	recipientPublicKey, ok := userlib.KeystoreGet(recipient)
+	if !ok {
+		return "", errors.New("recipient public key not in keystore")
+	}
+
+	record, err := encryptAndSign(recipientAccessToken, recipientPublicKey, userdata.SignKey)
+	if err != nil {
+		return "", err
+	}
+
+	return string(record), nil
 }
 
 // Note recipient's filename can be different from the sender's filename.
@@ -663,12 +732,26 @@ func (userdata *User) ShareFile(filename string, recipient string) (magicString 
 // what the filename even is!  However, the recipient must ensure that
 // it is authentically from the sender.
 func (userdata *User) ReceiveFile(filename string, sender string, magicString string) error {
+	var accessToken AccessToken
+
+	decryptAndVerifyAccessTokenRecipient([]byte(magicString), &accessToken, userdata.PrivateKey, sender)
+
+	record, err := encryptAndSign(accessToken, userdata.PublicKey, userdata.SignKey)
+	if err != nil {
+		return err
+	}
+
+	accessTokenKey, _ := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, userdata.Username, filename)
+
+	userlib.DatastoreSet(accessTokenKey, record)
+
 	return nil
+
 }
 
 // Removes target user's access.
 func (userdata *User) RevokeFile(filename string, targetUsername string) (err error) {
-	var accessToken AccessToken
+	// var accessToken AccessToken
 
 	exists, err := loadAccessToken(&accessToken, userdata.Username, filename, userdata.PrivateKey)
 
@@ -682,11 +765,11 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 
 	var metadata Metadata
 
-	err = loadMetaData(&metadata, &accessToken)
+	// err = loadMetaData(&metadata, &accessToken)
 
-	if err != nil {
-		return err
-	}
+	// if err != nil {
+	// 	return err
+	// }
 
 	if metadata.Owner != userdata.Username {
 		return errors.New("cannot revoke file because user is not owner of file")
