@@ -165,6 +165,9 @@ func encryptAndMAC(v interface{}, symKey []byte) ([]byte, error) {
 }
 
 func decryptAndMACEval(contents []byte, symKey []byte) (message []byte, err error) {
+	if len(contents) <= MAC_SIZE {
+		return nil, errors.New("record corrupted")
+	}
 	MAC := contents[:MAC_SIZE]
 	ciphertext := contents[MAC_SIZE:]
 	message = userlib.SymDec(symKey, ciphertext)
@@ -281,6 +284,10 @@ func loadAccessToken(accessToken *AccessToken, username string, filename string,
 	accessTokenRecord, ok := userlib.DatastoreGet(accessTokenKey)
 	if !ok {
 		return false, errors.New("access token not found error")
+	}
+
+	if len(accessTokenRecord) <= RSA_SIGN_BYTES {
+		return false, errors.New("access token corrupted")
 	}
 
 	userVerifyKey, _ := userlib.KeystoreGet(USER_DS_PREFIX + username)
@@ -458,6 +465,10 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	if !exists {
 		userlib.DebugMsg("u:" + username + " p:" + password + "does not exist")
 		return nil, errors.New("username not found error")
+	}
+
+	if len(data) <= 64 {
+		return nil, errors.New("userdata corrupted")
 	}
 
 	saltkey, err := makeDataStoreKeyAll(SALT_PREFIX, username)
@@ -742,6 +753,10 @@ func (userdata *User) ShareFile(filename string, recipient string) (magicString 
 // it is authentically from the sender.
 func (userdata *User) ReceiveFile(filename string, sender string, magicString string) error {
 	var accessToken AccessToken
+
+	if len([]byte(magicString)) <= RSA_SIGN_BYTES {
+		return errors.New("magic string is invalid")
+	}
 
 	decryptAndVerifyAccessTokenRecipient([]byte(magicString), &accessToken, userdata.PrivateKey, sender)
 
