@@ -253,6 +253,65 @@ func TestShare(t *testing.T) {
 
 }
 
+func TestRevoke(t *testing.T) {
+	clear()
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+	u2, err2 := InitUser("bob", "foobar")
+	if err2 != nil {
+		t.Error("Failed to initialize bob", err2)
+		return
+	}
+
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+
+	var v2 []byte
+	var magic_string string
+
+	v, err = u.LoadFile("file1")
+
+	magic_string, _ = u.ShareFile("file1", "bob")
+
+	_ = u2.ReceiveFile("file2", "alice", magic_string)
+
+	v2, _ = u2.LoadFile("file2")
+
+	if !reflect.DeepEqual(v, v2) {
+		t.Error("Shared file is not the same", v, v2)
+		return
+	}
+
+	newData := make([]byte, MAX_BLOCK_SIZE*20)
+	newData[MAX_BLOCK_SIZE*10+14] = 9
+
+	u2.StoreFile("file2", newData)
+
+	newData2, _ := u2.LoadFile("file2")
+	newData1, _ := u.LoadFile("file1")
+
+	if !reflect.DeepEqual(newData1, newData2) {
+		t.Error("Shared file is not the same", newData1, newData2)
+		return
+	}
+
+	u.RevokeFile("file1", "bob")
+
+	tryAgain, err := u2.LoadFile("file2")
+	if err == nil || tryAgain != nil {
+		t.Error("Was able to load file")
+	}
+
+	err = u2.AppendFile("file2", newData)
+	if err == nil {
+		t.Error("was able to append to file")
+	}
+
+}
+
 func TestRevokeAllChildren(t *testing.T) {
 
 	alicebranch := Sharebranch{

@@ -744,6 +744,22 @@ func (userdata *User) ShareFile(filename string, recipient string) (magicString 
 		return "", err
 	}
 
+	//update sharetree
+
+	var metaData Metadata
+
+	loadMetaData(&metaData, &ownerAccessToken)
+
+	for _, branch := range metaData.Sharetree {
+		if strings.Compare(branch.Parent, userdata.Username) == 0 {
+			branch.Children = append(branch.Children, recipient)
+		}
+	}
+
+	metaDataKey, _ := makeDataStoreKeyAll(METADATA_PREFIX, userdata.Username, filename)
+	metaDataRecord, _ := encryptAndMAC(metaData, ownerAccessToken.FileKey)
+	userlib.DatastoreSet(metaDataKey, metaDataRecord)
+
 	return string(record), nil
 }
 
@@ -789,11 +805,11 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 
 	var metadata Metadata
 
-	// err = loadMetaData(&metadata, &accessToken)
+	err = loadMetaData(&metadata, &accessToken)
 
-	// if err != nil {
-	// 	return err
-	// }
+	if err != nil {
+		return err
+	}
 
 	if metadata.Owner != userdata.Username {
 		return errors.New("cannot revoke file because user is not owner of file")
