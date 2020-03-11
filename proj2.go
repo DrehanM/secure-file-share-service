@@ -7,7 +7,7 @@ package proj2
 import (
 	// You neet to add with
 	// go get github.com/cs161-staff/userlib
-	"fmt"
+
 	"strconv"
 
 	"github.com/cs161-staff/userlib"
@@ -156,7 +156,6 @@ func encryptAndMAC(v interface{}, symKey []byte) ([]byte, error) {
 	ciphertext := userlib.SymEnc(symKey, IV, message)
 	MAC, err := userlib.HMACEval(symKey, message)
 	if err != nil {
-		fmt.Printf("%s\n", err)
 		return nil, err
 	}
 
@@ -165,47 +164,30 @@ func encryptAndMAC(v interface{}, symKey []byte) ([]byte, error) {
 	return record, nil
 }
 
-func decryptAndMACEvalMetaData(contents []byte, metaData *Metadata, symKey []byte) (err error) {
+func decryptAndMACEval(contents []byte, symKey []byte) (message []byte, err error) {
 	MAC := contents[:MAC_SIZE]
 	ciphertext := contents[MAC_SIZE:]
-	message := userlib.SymDec(symKey, ciphertext)
+	message = userlib.SymDec(symKey, ciphertext)
 
 	calculatedMAC, err := userlib.HMACEval(symKey, message)
+
 	if err != nil {
-		fmt.Printf("%s\n", err)
-		return err
+		return nil, err
 	}
 
 	ok := userlib.HMACEqual(MAC, calculatedMAC)
 	if !ok {
 		userlib.DebugMsg("MAC not equal to calculated MAC. Tampering detected")
-		return errors.New("MAC not equal")
+		return nil, errors.New("MAC not equal")
 	}
-
-	json.Unmarshal(message, metaData)
-	return nil
-}
-
-func decryptAndMACEval(contents []byte, block *Block, symKey []byte) {
-
+	return message, nil
 }
 
 func decryptAndMACEvalBlock(contents []byte, block *Block, symKey []byte) (err error) {
-	MAC := contents[:MAC_SIZE]
-	ciphertext := contents[MAC_SIZE:]
-	message := userlib.SymDec(symKey, ciphertext)
 
-	calculatedMAC, err := userlib.HMACEval(symKey, message)
-
+	message, err := decryptAndMACEval(contents, symKey)
 	if err != nil {
-		fmt.Printf("%s\n", err)
 		return err
-	}
-
-	ok := userlib.HMACEqual(MAC, calculatedMAC)
-	if !ok {
-		userlib.DebugMsg("MAC not equal to calculated MAC. Tampering detected")
-		return errors.New("MAC not equal")
 	}
 
 	json.Unmarshal(message, block)
@@ -213,46 +195,48 @@ func decryptAndMACEvalBlock(contents []byte, block *Block, symKey []byte) (err e
 	return nil
 }
 
+func decryptAndMACEvalMetaData(contents []byte, metaData *Metadata, symKey []byte) (err error) {
+
+	message, err := decryptAndMACEval(contents, symKey)
+	if err != nil {
+		return err
+	}
+
+	json.Unmarshal(message, metaData)
+	return nil
+}
+
 func encryptAndSign(v interface{}, publicKey userlib.PKEEncKey, signingKey userlib.DSSignKey) ([]byte, error) {
 	message, err := json.Marshal(v)
 	if err != nil {
-		fmt.Printf("%s\n", err)
 		return nil, err
 	}
 
 	ciphertext, err := userlib.PKEEnc(publicKey, message)
 
 	if err != nil {
-		fmt.Printf("%s\n", err)
 		return nil, err
 	}
 	record, err := signMessage(ciphertext, message, signingKey)
 
 	if err != nil {
-		fmt.Printf("%s\n", err)
 		return nil, err
 	}
 
 	return record, nil
 }
 
-func decryptAndVerify(contents []byte, accessToken *AccessToken, privateKey userlib.PKEDecKey, verifyKey userlib.DSVerifyKey) (err error) {
+func decryptAndVerifyAccessToken(contents []byte, accessToken *AccessToken, privateKey userlib.PKEDecKey, verifyKey userlib.DSVerifyKey) (err error) {
 	signature := contents[:RSA_SIGN_BYTES]
 	ciphertext := contents[RSA_SIGN_BYTES:]
 	message, _ := userlib.PKEDec(privateKey, ciphertext)
 
 	err = userlib.DSVerify(verifyKey, message, signature)
 	if err != nil {
-		fmt.Printf("%s\n", err)
 		return err
 	}
 
 	err = json.Unmarshal(message, accessToken)
-
-	if err != nil {
-		userlib.DebugMsg("Unmarshal failed")
-		return err
-	}
 
 	return nil
 }
@@ -327,7 +311,6 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 
 	userdata.PublicKey, userdata.PrivateKey, err = userlib.PKEKeyGen()
 	if err != nil {
-		fmt.Printf("%s\n", err)
 		return nil, err
 	}
 
@@ -342,7 +325,6 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	//convert userdata to string
 	msg, err := json.Marshal(userdata)
 	if err != nil {
-		fmt.Printf("%s\n", err)
 		return nil, err
 	}
 
@@ -352,7 +334,6 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	//generate HMAC signature
 	signature, err := userlib.HMACEval(symkey, msg)
 	if err != nil {
-		fmt.Printf("%s\n", err)
 		return nil, err
 	}
 
@@ -362,14 +343,12 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	//construct key user struct in dataStore
 	key, err := makeDataStoreKeyAll(ACCOUNT_INFO_PREFIX, userdata.Username)
 	if err != nil {
-		fmt.Printf("%s\n", err)
 		return nil, err
 	}
 
 	//construct key for salt in dataStore
 	saltkey, err := makeDataStoreKeyAll(SALT_PREFIX, userdata.Username)
 	if err != nil {
-		fmt.Printf("%s\n", err)
 		return nil, err
 	}
 
@@ -494,6 +473,7 @@ func (metadata Metadata) storeFileBlocks(headptr *Block, fileKey []byte) (err er
 // should NOT be revealed to the datastore!
 func (userdata *User) StoreFile(filename string, data []byte) {
 
+	//construct key for metadata in dataStore
 	metaDataKey, err := makeDataStoreKeyAll(METADATA_PREFIX, userdata.Username, filename)
 	if err != nil {
 		return
@@ -541,19 +521,14 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 			userSignKey,
 		)
 
-		fmt.Printf("%s\n", accessToken.FileKey)
-
 		accessTokenKey, _ := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, userdata.Username, metadata.Filename)
 		userlib.DatastoreSet(accessTokenKey, accessTokenRecord)
 
 	} else {
 
+		//TODO: Append file
+
 	}
-	/* //TODO: This is a toy implementation.
-	UUID, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
-	packaged_data, _ := json.Marshal(data)
-	userlib.DatastoreSet(UUID, packaged_data)
-	//End of toy implementation */
 
 	return
 }
@@ -573,47 +548,25 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 
 	accessTokenKey, _ := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, userdata.Username, filename)
-
 	accessTokenRecord, ok := userlib.DatastoreGet(accessTokenKey)
+
 	if !ok {
 		userlib.DebugMsg("u:" + userdata.Username + " does not have access any file named f:" + filename)
 		return nil, errors.New("username not found error")
 	}
 
-	//fileInfoTokenKey, _ := makeDataStoreKeyAll(FILE_INFO_TOKEN_PREFIX, userdata.Username, filename)
-
-	//fileInfoToken, _ := userlib.DatastoreGet(fileInfoTokenKey)
-
 	var accessToken AccessToken
-	//fileKeyWrapper.key = []byte{}
-	//var ownerAndFilename []string
 
 	userVerifyKey, _ := userlib.KeystoreGet(USER_DS_PREFIX + userdata.Username + filename)
 
-	err = decryptAndVerify(accessTokenRecord, &accessToken, userdata.PrivateKey, userVerifyKey)
+	err = decryptAndVerifyAccessToken(accessTokenRecord, &accessToken, userdata.PrivateKey, userVerifyKey)
 	if err != nil {
 		return nil, err
 	}
 
-	/* Fuck
-	fmt.Printf("%s\n", fileKeyJSON)
-
-	json.Unmarshal(fileKeyJSON, &fileKeyWrapper)
-	fmt.Printf("%s\n", fileKeyWrapper)
-	fileKey = fileKeyWrapper.key
-
-	fmt.Printf("%s\n", fileKey)
-	*/
-
-	/* WARNING: Need to figure out how to convey the datastore key for the file objects to shared user
-	err = decryptAndVerify(fileInfoToken, ownerAndFilename, userdata.PrivateKey, userVerifyKey)
-	if err != nil {
-		return nil, err
-	} */
 	var key userlib.UUID
 	var metadata Metadata
 
-	/* WARNING: Need to figure out how to convey the datastore key for the file objects to shared user */
 	key, _ = makeDataStoreKeyAll(METADATA_PREFIX, accessToken.OwnerUsername, accessToken.Filename)
 	record, _ := userlib.DatastoreGet(key)
 
@@ -631,16 +584,6 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 		err = decryptAndMACEvalBlock(record, &block, accessToken.FileKey)
 		file = append(file, block.Contents...)
 	}
-
-	/*//TODO: This is a toy implementation.
-	UUID, _ := uuid.FromBytes([]byte(filename + userdata.Username)[:16])
-	packaged_data, ok := userlib.DatastoreGet(UUID)
-	if !ok {
-		return nil, errors.New(strings.ToTitle("File not found!"))
-	}
-	json.Unmarshal(packaged_data, &data)
-	return data, nil
-	//End of toy implementation*/
 
 	return file, nil
 }
