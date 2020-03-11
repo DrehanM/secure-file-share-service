@@ -603,7 +603,7 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 
 		loadMetaData(&metadata, &accessToken)
 
-		blockCount, headptr := constructFileBlocks(data)
+		blockCount, headptr := constructFileBlocks(0, data)
 
 		metadata.BlockCount = blockCount
 
@@ -627,9 +627,14 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 
 	var accessToken AccessToken
 
-	err = loadAccessToken(&accessToken, userdata.Username, filename, userdata.PrivateKey)
+	exists, err := loadAccessToken(&accessToken, userdata.Username, filename, userdata.PrivateKey)
+
 	if err != nil {
 		return err
+	}
+
+	if !exists {
+		return errors.New("no such file:" + filename + " for user:" + userdata.Username)
 	}
 
 	var metadata Metadata
@@ -707,9 +712,13 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 func (userdata *User) ShareFile(filename string, recipient string) (magicString string, err error) {
 	var ownerAccessToken AccessToken
 
-	err = loadAccessToken(&ownerAccessToken, userdata.Username, filename, userdata.PrivateKey)
+	exists, err := loadAccessToken(&ownerAccessToken, userdata.Username, filename, userdata.PrivateKey)
 	if err != nil {
 		return "", err
+	}
+
+	if !exists {
+		return "", errors.New("no such file:" + filename + " for user:" + userdata.Username)
 	}
 
 	var recipientAccessToken AccessToken = ownerAccessToken
@@ -751,7 +760,7 @@ func (userdata *User) ReceiveFile(filename string, sender string, magicString st
 
 // Removes target user's access.
 func (userdata *User) RevokeFile(filename string, targetUsername string) (err error) {
-	// var accessToken AccessToken
+	var accessToken AccessToken
 
 	exists, err := loadAccessToken(&accessToken, userdata.Username, filename, userdata.PrivateKey)
 

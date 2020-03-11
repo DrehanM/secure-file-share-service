@@ -184,18 +184,18 @@ func TestShare(t *testing.T) {
 		return
 	}
 
-	// newData := make([]byte, MAX_BLOCK_SIZE*20)
-	// newData[MAX_BLOCK_SIZE*10+14] = 9
+	newData := make([]byte, MAX_BLOCK_SIZE*20)
+	newData[MAX_BLOCK_SIZE*10+14] = 9
 
-	// u2.StoreFile("file2", newData)
+	u2.StoreFile("file2", newData)
 
-	// newData2, err := u2.LoadFile("file2")
-	// newData1, err := u.LoadFile("file1")
+	newData2, err := u2.LoadFile("file2")
+	newData1, err := u.LoadFile("file1")
 
-	// if !reflect.DeepEqual(newData1, newData2) {
-	// 	t.Error("Shared file is not the same", newData1, newData2)
-	// 	return
-	// }
+	if !reflect.DeepEqual(newData1, newData2) {
+		t.Error("Shared file is not the same", newData1, newData2)
+		return
+	}
 
 }
 
