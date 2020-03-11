@@ -158,3 +158,13 @@ func TestShare(t *testing.T) {
 	}
 
 }
+
+func TestConstructFileBlocks(t *testing.T) {
+
+	blockCount, head := constructFileBlocks(make([]byte, 50000))
+	if head == nil || blockCount != 50000/MAX_BLOCK_SIZE {
+		t.Error("failed!")
+		t.Log("blockCount:" + string(blockCount))
+		t.Logf("blockCount:%d", blockCount)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	// You neet to add with
 	// go get github.com/cs161-staff/userlib
 	"fmt"
+	"strconv"
 
 	"github.com/cs161-staff/userlib"
 
@@ -229,7 +230,7 @@ func encryptAndSign(v interface{}, publicKey userlib.PKEEncKey, signingKey userl
 	return record, nil
 }
 
-func decryptAndVerify(contents []byte, v interface{}, privateKey userlib.PKEDecKey, verifyKey userlib.DSVerifyKey) (object interface{}, err error) {
+func decryptAndVerify(contents []byte, v interface{}, privateKey userlib.PKEDecKey, verifyKey userlib.DSVerifyKey) (err error) {
 	signature := contents[:RSA_SIGN_BYTES]
 	ciphertext := contents[RSA_SIGN_BYTES:]
 	message, _ := userlib.PKEDec(privateKey, ciphertext)
@@ -237,17 +238,17 @@ func decryptAndVerify(contents []byte, v interface{}, privateKey userlib.PKEDecK
 	err = userlib.DSVerify(verifyKey, message, signature)
 	if err != nil {
 		fmt.Printf("%s\n", err)
-		return nil, err
+		return err
 	}
 
 	err = json.Unmarshal(message, &v)
 
 	if err != nil {
 		userlib.DebugMsg("Unmarshal failed")
-		return nil, err
+		return err
 	}
 
-	return v, nil
+	return nil
 }
 
 func min(a int, b int) (retval int) {
@@ -290,8 +291,10 @@ type Metadata struct {
 	Sharetree  []Sharetree
 }
 
-type SymmetricKeyWrapper struct {
-	key []byte
+type AccessToken struct {
+	FileKey       []byte
+	OwnerUsername string
+	Filename      string
 }
 
 // This creates a user.  It will only be called once for a user
@@ -440,7 +443,7 @@ func constructFileBlocks(data []byte) (blockCount uint32, headptr *Block) {
 		Next:     nil,
 	}
 
-	var prev Block = head
+	var prev *Block = &head
 
 	for i := MAX_BLOCK_SIZE; i < len(data); i += MAX_BLOCK_SIZE {
 		k := uint32(i)
@@ -451,7 +454,7 @@ func constructFileBlocks(data []byte) (blockCount uint32, headptr *Block) {
 		}
 
 		prev.Next = &current
-		prev = current
+		prev = &current
 	}
 
 	blockCount = uint32(len(data) / MAX_BLOCK_SIZE)
@@ -523,12 +526,19 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 		userSignKey, userVerifyKey, _ := userlib.DSKeyGen()
 		userlib.KeystoreSet(USER_DS_PREFIX+userdata.Username+metadata.Filename, userVerifyKey)
 
-		symKey := SymmetricKeyWrapper{key: fileKey}
-		accessToken, _ := encryptAndSign(
-			symKey,
+		accessToken := AccessToken{
+			FileKey:       fileKey,
+			OwnerUsername: metadata.Owner,
+			Filename:      metadata.Filename,
+		}
+
+		record, _ = encryptAndSign(
+			accessToken,
 			userdata.PublicKey,
 			userSignKey,
 		)
+
+		fmt.Printf("%s\n", accessToken.FileKey)
 
 		//WARNING: Depends on the fact that sizeof([]string{metadata.Owner, metadata.Filename}) < RSA KEY SIZE
 		/* fileInfo, _ := json.Marshal([]string{metadata.Owner, metadata.Filename})
@@ -539,7 +549,7 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 		) */
 
 		key, err = makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, userdata.Username, metadata.Filename)
-		userlib.DatastoreSet(key, accessToken)
+		userlib.DatastoreSet(key, record)
 
 		/* key, err = makeDataStoreKeyAll(FILE_INFO_TOKEN_PREFIX, userdata.Username, metadata.Filename)
 		userlib.DatastoreSet(key, fileInfoToken) */
@@ -583,7 +593,7 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 
 	accessTokenKey, _ := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, userdata.Username, filename)
 
-	accessToken, ok := userlib.DatastoreGet(accessTokenKey)
+	accessTokenRecord, ok := userlib.DatastoreGet(accessTokenKey)
 	if !ok {
 		userlib.DebugMsg("u:" + userdata.Username + " does not have access any file named f:" + filename)
 		return nil, errors.New("username not found error")
@@ -593,16 +603,26 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 
 	//fileInfoToken, _ := userlib.DatastoreGet(fileInfoTokenKey)
 
-	var fileKeyWrapper SymmetricKeyWrapper
+	var accessToken AccessToken
+	//fileKeyWrapper.key = []byte{}
 	//var ownerAndFilename []string
 
 	userVerifyKey, _ := userlib.KeystoreGet(USER_DS_PREFIX + userdata.Username + filename)
 
-	_, err = decryptAndVerify(accessToken, fileKeyWrapper, userdata.PrivateKey, userVerifyKey)
-	fileKey := fileKeyWrapper.key
+	err = decryptAndVerify(accessTokenRecord, accessToken, userdata.PrivateKey, userVerifyKey)
 	if err != nil {
 		return nil, err
 	}
+
+	/* Fuck
+	fmt.Printf("%s\n", fileKeyJSON)
+
+	json.Unmarshal(fileKeyJSON, &fileKeyWrapper)
+	fmt.Printf("%s\n", fileKeyWrapper)
+	fileKey = fileKeyWrapper.key
+
+	fmt.Printf("%s\n", fileKey)
+	*/
 
 	/* WARNING: Need to figure out how to convey the datastore key for the file objects to shared user
 	err = decryptAndVerify(fileInfoToken, ownerAndFilename, userdata.PrivateKey, userVerifyKey)
@@ -613,10 +633,10 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 	var metadata Metadata
 
 	/* WARNING: Need to figure out how to convey the datastore key for the file objects to shared user */
-	key, _ = makeDataStoreKeyAll(METADATA_PREFIX, userdata.Username, filename)
+	key, _ = makeDataStoreKeyAll(METADATA_PREFIX, accessToken.OwnerUsername, accessToken.Filename)
 	record, _ := userlib.DatastoreGet(key)
 
-	err = decryptAndMACEval(record, metadata, fileKey)
+	err = decryptAndMACEval(record, metadata, accessToken.FileKey)
 	if err != nil {
 		return nil, err
 	}
@@ -625,9 +645,9 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 
 	for i := 0; i < int(metadata.BlockCount); i++ {
 		var block Block
-		key, _ = makeDataStoreKeyAll(BLOCK_PREFIX, metadata.Owner, metadata.Filename, string(i))
+		key, _ = makeDataStoreKeyAll(BLOCK_PREFIX, metadata.Owner, metadata.Filename, strconv.Itoa(i))
 		record, _ = userlib.DatastoreGet(key)
-		err = decryptAndMACEval(record, block, fileKey)
+		err = decryptAndMACEval(record, block, accessToken.FileKey)
 		file = append(file, block.Contents...)
 	}
 
