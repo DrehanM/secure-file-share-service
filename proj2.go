@@ -248,6 +248,53 @@ func min(a int, b int) (retval int) {
 	return b
 }
 
+func loadAccessToken(accessToken *AccessToken, username string, filename string, privateKey userlib.PKEDecKey) (err error) {
+	accessTokenKey, _ := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, username, filename)
+	accessTokenRecord, ok := userlib.DatastoreGet(accessTokenKey)
+	if !ok {
+		return errors.New("access token not found error")
+	}
+
+	userVerifyKey, _ := userlib.KeystoreGet(USER_DS_PREFIX + username + filename)
+
+	err = decryptAndVerifyAccessToken(accessTokenRecord, accessToken, privateKey, userVerifyKey)
+	if err != nil {
+		return err
+	}
+
+	return nil
+
+}
+
+func loadMetaData(metaData *Metadata, accessToken *AccessToken) (err error) {
+
+	key, _ := makeDataStoreKeyAll(METADATA_PREFIX, accessToken.OwnerUsername, accessToken.Filename)
+	record, ok := userlib.DatastoreGet(key)
+	if !ok {
+		return errors.New("metadata not found error")
+	}
+
+	err = decryptAndMACEvalMetaData(record, metaData, accessToken.FileKey)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func loadBlock(block *Block, blockID int, metaData *Metadata, accessToken *AccessToken) (err error) {
+	key, _ := makeDataStoreKeyAll(BLOCK_PREFIX, metaData.Owner, metaData.Filename, strconv.Itoa(blockID))
+	record, ok := userlib.DatastoreGet(key)
+	if !ok {
+		return errors.New("file block not found error")
+	}
+
+	err = decryptAndMACEvalBlock(record, block, accessToken.FileKey)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // The structure definition for a user record
 type User struct {
 	Username   string
@@ -526,7 +573,13 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 
 	} else {
 
-		//TODO: Append file
+		// var metadata Metadata
+		// metaDataRecord, _ := userlib.DatastoreGet(metaDataKey)
+
+		// err = decryptAndMACEvalMetaData(metaDataRecord, &metadata, accessToken.FileKey)
+		// if err != nil {
+		// 	return nil, err
+		// }
 
 	}
 
@@ -545,32 +598,19 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 // This loads a file from the Datastore.
 //
 // It should give an error if the file is corrupted in any way.
+
 func (userdata *User) LoadFile(filename string) (data []byte, err error) {
-
-	accessTokenKey, _ := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, userdata.Username, filename)
-	accessTokenRecord, ok := userlib.DatastoreGet(accessTokenKey)
-
-	if !ok {
-		userlib.DebugMsg("u:" + userdata.Username + " does not have access any file named f:" + filename)
-		return nil, errors.New("username not found error")
-	}
 
 	var accessToken AccessToken
 
-	userVerifyKey, _ := userlib.KeystoreGet(USER_DS_PREFIX + userdata.Username + filename)
-
-	err = decryptAndVerifyAccessToken(accessTokenRecord, &accessToken, userdata.PrivateKey, userVerifyKey)
+	err = loadAccessToken(&accessToken, userdata.Username, filename, userdata.PrivateKey)
 	if err != nil {
 		return nil, err
 	}
 
-	var key userlib.UUID
 	var metadata Metadata
 
-	key, _ = makeDataStoreKeyAll(METADATA_PREFIX, accessToken.OwnerUsername, accessToken.Filename)
-	record, _ := userlib.DatastoreGet(key)
-
-	err = decryptAndMACEvalMetaData(record, &metadata, accessToken.FileKey)
+	err = loadMetaData(&metadata, &accessToken)
 	if err != nil {
 		return nil, err
 	}
@@ -579,9 +619,10 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 
 	for i := 0; i < int(metadata.BlockCount); i++ {
 		var block Block
-		key, _ = makeDataStoreKeyAll(BLOCK_PREFIX, metadata.Owner, metadata.Filename, strconv.Itoa(i))
-		record, _ = userlib.DatastoreGet(key)
-		err = decryptAndMACEvalBlock(record, &block, accessToken.FileKey)
+		err = loadBlock(&block, i, &metadata, &accessToken)
+		if err != nil {
+			return nil, err
+		}
 		file = append(file, block.Contents...)
 	}
 
