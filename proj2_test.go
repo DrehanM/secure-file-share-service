@@ -82,7 +82,8 @@ func TestStorage(t *testing.T) {
 		return
 	}
 
-	v := []byte("This is a test")
+	v := make([]byte, MAX_BLOCK_SIZE*20)
+	v[MAX_BLOCK_SIZE*15+1] = 10
 	u.StoreFile("file1", v)
 
 	v2, err2 := u.LoadFile("file1")
@@ -94,6 +95,32 @@ func TestStorage(t *testing.T) {
 		t.Error("Downloaded file is not the same", v, v2)
 		return
 	}
+}
+
+func TestAppend(t *testing.T) {
+	clear()
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+
+	v := make([]byte, MAX_BLOCK_SIZE*20)
+	v[MAX_BLOCK_SIZE*15+1] = 10
+	u.StoreFile("file1", v)
+
+	newData := make([]byte, MAX_BLOCK_SIZE*10)
+	newData[MAX_BLOCK_SIZE*3+12] = 30
+
+	u.AppendFile("file1", newData)
+
+	v_new, _ := u.LoadFile("file1")
+
+	if !reflect.DeepEqual(v_new, append(v, newData...)) {
+		t.Error("Appending failed")
+		return
+	}
+
 }
 
 func TestInvalidFile(t *testing.T) {
@@ -157,4 +184,61 @@ func TestShare(t *testing.T) {
 		return
 	}
 
+	newData := make([]byte, MAX_BLOCK_SIZE*20)
+	newData[MAX_BLOCK_SIZE*10+14] = 9
+
+	u2.StoreFile("file2", newData)
+
+	newData2, err := u2.LoadFile("file2")
+	newData1, err := u.LoadFile("file1")
+
+	if !reflect.DeepEqual(newData1, newData2) {
+		t.Error("Shared file is not the same", newData1, newData2)
+		return
+	}
+
+}
+
+func TestRevokeAllChildren(t *testing.T) {
+
+	alicebranch := Sharebranch{
+		Parent:   "alice",
+		Children: []string{"bob", "charlie"},
+	}
+	bobbranch := Sharebranch{
+		Parent:   "bob",
+		Children: []string{"david"},
+	}
+	charliebranch := Sharebranch{
+		Parent:   "charlie",
+		Children: []string{"eric", "fred"},
+	}
+	davidbranch := Sharebranch{
+		Parent:   "david",
+		Children: []string{"george"},
+	}
+	ericbranch := Sharebranch{
+		Parent:   "eric",
+		Children: []string{},
+	}
+	fredbranch := Sharebranch{
+		Parent:   "fred",
+		Children: []string{},
+	}
+	georgebranch := Sharebranch{
+		Parent:   "george",
+		Children: []string{},
+	}
+
+	var dummyMetadata Metadata
+	dummyMetadata.Sharetree = []Sharebranch{alicebranch, bobbranch, charliebranch, davidbranch, ericbranch, fredbranch, georgebranch}
+
+	dummyMetadata.Sharetree = RevokeAllChildren(dummyMetadata.Sharetree, "bob")
+
+	expectedRemaining := []string{"alice", "charlie", "eric", "fred"}
+	for i := 0; i < len(dummyMetadata.Sharetree); i++ {
+		if dummyMetadata.Sharetree[i].Parent != expectedRemaining[i] {
+			t.Error("Did not revoke correctly", dummyMetadata.Sharetree, expectedRemaining)
+		}
+	}
 }
