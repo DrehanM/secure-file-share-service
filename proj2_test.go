@@ -82,7 +82,8 @@ func TestStorage(t *testing.T) {
 		return
 	}
 
-	v := []byte("This is a test")
+	v := make([]byte, MAX_BLOCK_SIZE*20)
+	v[MAX_BLOCK_SIZE*15+1] = 10
 	u.StoreFile("file1", v)
 
 	v2, err2 := u.LoadFile("file1")
@@ -94,6 +95,32 @@ func TestStorage(t *testing.T) {
 		t.Error("Downloaded file is not the same", v, v2)
 		return
 	}
+}
+
+func TestAppend(t *testing.T) {
+	clear()
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+
+	v := make([]byte, MAX_BLOCK_SIZE*20)
+	v[MAX_BLOCK_SIZE*15+1] = 10
+	u.StoreFile("file1", v)
+
+	newData := make([]byte, MAX_BLOCK_SIZE*10)
+	newData[MAX_BLOCK_SIZE*3+12] = 30
+
+	u.AppendFile("file1", newData)
+
+	v_new, _ := u.LoadFile("file1")
+
+	if !reflect.DeepEqual(v_new, append(v, newData...)) {
+		t.Error("Appending failed")
+		return
+	}
+
 }
 
 func TestInvalidFile(t *testing.T) {
@@ -157,14 +184,4 @@ func TestShare(t *testing.T) {
 		return
 	}
 
-}
-
-func TestConstructFileBlocks(t *testing.T) {
-
-	blockCount, head := constructFileBlocks(make([]byte, 50000))
-	if head == nil || blockCount != 50000/MAX_BLOCK_SIZE {
-		t.Error("failed!")
-		t.Log("blockCount:" + string(blockCount))
-		t.Logf("blockCount:%d", blockCount)
-	}
 }

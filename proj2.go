@@ -467,10 +467,10 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 }
 
 //Not tested yet.
-func constructFileBlocks(data []byte) (blockCount uint32, headptr *Block) {
+func constructFileBlocks(startID uint32, data []byte) (blockCount uint32, headptr *Block) {
 
 	head := Block{
-		BlockID:  0,
+		BlockID:  startID,
 		Contents: data[:min(len(data), MAX_BLOCK_SIZE)],
 		Next:     nil,
 	}
@@ -480,7 +480,7 @@ func constructFileBlocks(data []byte) (blockCount uint32, headptr *Block) {
 	for i := MAX_BLOCK_SIZE; i < len(data); i += MAX_BLOCK_SIZE {
 		k := uint32(i)
 		current := Block{
-			BlockID:  k / MAX_BLOCK_SIZE,
+			BlockID:  startID + k/MAX_BLOCK_SIZE,
 			Contents: data[k:min(len(data), i+MAX_BLOCK_SIZE)],
 			Next:     nil,
 		}
@@ -542,7 +542,7 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 			Sharetree:  []Sharetree{sharetree},
 		}
 
-		blockCount, headptr := constructFileBlocks(data)
+		blockCount, headptr := constructFileBlocks(0, data)
 
 		metadata.BlockCount = blockCount
 
@@ -573,13 +573,7 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 
 	} else {
 
-		// var metadata Metadata
-		// metaDataRecord, _ := userlib.DatastoreGet(metaDataKey)
-
-		// err = decryptAndMACEvalMetaData(metaDataRecord, &metadata, accessToken.FileKey)
-		// if err != nil {
-		// 	return nil, err
-		// }
+		return
 
 	}
 
@@ -592,7 +586,36 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 // existing file, but only whatever additional information and
 // metadata you need.
 func (userdata *User) AppendFile(filename string, data []byte) (err error) {
-	return errors.New("Not implemented.")
+
+	var accessToken AccessToken
+
+	err = loadAccessToken(&accessToken, userdata.Username, filename, userdata.PrivateKey)
+	if err != nil {
+		return err
+	}
+
+	var metadata Metadata
+
+	err = loadMetaData(&metadata, &accessToken)
+	if err != nil {
+		return err
+	}
+
+	blockCount, head := constructFileBlocks(metadata.BlockCount, data)
+
+	metadata.BlockCount += blockCount
+
+	metadata.storeFileBlocks(head, accessToken.FileKey)
+
+	metaDataRecord, _ := encryptAndMAC(metadata, accessToken.FileKey)
+	metaDataKey, err := makeDataStoreKeyAll(METADATA_PREFIX, userdata.Username, filename)
+	if err != nil {
+		return
+	}
+	userlib.DatastoreSet(metaDataKey, metaDataRecord)
+
+	return nil
+
 }
 
 // This loads a file from the Datastore.
