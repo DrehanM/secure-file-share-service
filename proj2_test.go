@@ -123,6 +123,60 @@ func TestAppend(t *testing.T) {
 
 }
 
+func TestShareAppend(t *testing.T) {
+	clear()
+	u, err := InitUser("alice", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+
+	v := make([]byte, MAX_BLOCK_SIZE*20)
+	v[MAX_BLOCK_SIZE*15+1] = 10
+	u.StoreFile("file1", v)
+
+	u1, err := InitUser("bob", "fubar")
+	if err != nil {
+		t.Error("Failed to initialize user", err)
+		return
+	}
+
+	magic_string, err := u.ShareFile("file1", "bob")
+	if err != nil {
+		t.Error("Failed to share the a file", err)
+		return
+	}
+	err = u1.ReceiveFile("file2", "alice", magic_string)
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+
+	newData := make([]byte, MAX_BLOCK_SIZE*10)
+	newData[MAX_BLOCK_SIZE*3+12] = 30
+
+	u1.AppendFile("file2", newData)
+
+	newData2, err := u1.LoadFile("file2")
+	newData1, err := u.LoadFile("file1")
+
+	if !reflect.DeepEqual(newData1, newData2) {
+		t.Error("Shared file is not the same", newData1, newData2)
+		return
+	}
+
+	if !reflect.DeepEqual(newData1, append(v, newData...)) {
+		t.Error("appending shared file failed")
+		return
+	}
+
+	if !reflect.DeepEqual(newData2, append(v, newData...)) {
+		t.Error("appending shared file failed")
+		return
+	}
+
+}
+
 func TestInvalidFile(t *testing.T) {
 	clear()
 	u, err := InitUser("alice", "fubar")

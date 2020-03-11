@@ -651,7 +651,7 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 	metadata.storeFileBlocks(head, accessToken.FileKey)
 
 	metaDataRecord, _ := encryptAndMAC(metadata, accessToken.FileKey)
-	metaDataKey, err := makeDataStoreKeyAll(METADATA_PREFIX, userdata.Username, filename)
+	metaDataKey, err := makeDataStoreKeyAll(METADATA_PREFIX, accessToken.OwnerUsername, accessToken.Filename)
 	if err != nil {
 		return
 	}
