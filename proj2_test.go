@@ -82,8 +82,7 @@ func TestStorage(t *testing.T) {
 		return
 	}
 
-	v := make([]byte, MAX_BLOCK_SIZE*20)
-	v[MAX_BLOCK_SIZE*15+1] = 10
+	v := []byte("This is a test")
 	u.StoreFile("file1", v)
 
 	v2, err2 := u.LoadFile("file1")
@@ -95,86 +94,6 @@ func TestStorage(t *testing.T) {
 		t.Error("Downloaded file is not the same", v, v2)
 		return
 	}
-}
-
-func TestAppend(t *testing.T) {
-	clear()
-	u, err := InitUser("alice", "fubar")
-	if err != nil {
-		t.Error("Failed to initialize user", err)
-		return
-	}
-
-	v := make([]byte, MAX_BLOCK_SIZE*20)
-	v[MAX_BLOCK_SIZE*15+1] = 10
-	u.StoreFile("file1", v)
-
-	newData := make([]byte, MAX_BLOCK_SIZE*10)
-	newData[MAX_BLOCK_SIZE*3+12] = 30
-
-	u.AppendFile("file1", newData)
-
-	v_new, _ := u.LoadFile("file1")
-
-	if !reflect.DeepEqual(v_new, append(v, newData...)) {
-		t.Error("Appending failed")
-		return
-	}
-
-}
-
-func TestShareAppend(t *testing.T) {
-	clear()
-	u, err := InitUser("alice", "fubar")
-	if err != nil {
-		t.Error("Failed to initialize user", err)
-		return
-	}
-
-	v := make([]byte, MAX_BLOCK_SIZE*20)
-	v[MAX_BLOCK_SIZE*15+1] = 10
-	u.StoreFile("file1", v)
-
-	u1, err := InitUser("bob", "fubar")
-	if err != nil {
-		t.Error("Failed to initialize user", err)
-		return
-	}
-
-	magic_string, err := u.ShareFile("file1", "bob")
-	if err != nil {
-		t.Error("Failed to share the a file", err)
-		return
-	}
-	err = u1.ReceiveFile("file2", "alice", magic_string)
-	if err != nil {
-		t.Error("Failed to receive the share message", err)
-		return
-	}
-
-	newData := make([]byte, MAX_BLOCK_SIZE*10)
-	newData[MAX_BLOCK_SIZE*3+12] = 30
-
-	u1.AppendFile("file2", newData)
-
-	newData2, err := u1.LoadFile("file2")
-	newData1, err := u.LoadFile("file1")
-
-	if !reflect.DeepEqual(newData1, newData2) {
-		t.Error("Shared file is not the same", newData1, newData2)
-		return
-	}
-
-	if !reflect.DeepEqual(newData1, append(v, newData...)) {
-		t.Error("appending shared file failed")
-		return
-	}
-
-	if !reflect.DeepEqual(newData2, append(v, newData...)) {
-		t.Error("appending shared file failed")
-		return
-	}
-
 }
 
 func TestInvalidFile(t *testing.T) {
@@ -238,120 +157,151 @@ func TestShare(t *testing.T) {
 		return
 	}
 
-	newData := make([]byte, MAX_BLOCK_SIZE*20)
-	newData[MAX_BLOCK_SIZE*10+14] = 9
+}
 
-	u2.StoreFile("file2", newData)
+func TestShareAppend(t *testing.T) {
+	clear()
+	u, _ := InitUser("alice", "fubar")
 
-	newData2, err := u2.LoadFile("file2")
-	newData1, err := u.LoadFile("file1")
+	u2, _ := InitUser("bob", "foobar")
 
-	if !reflect.DeepEqual(newData1, newData2) {
-		t.Error("Shared file is not the same", newData1, newData2)
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+
+	var magic_string string
+
+	v, _ = u.LoadFile("file1")
+
+	magic_string, _ = u.ShareFile("file1", "bob")
+
+	_ = u2.ReceiveFile("file2", "alice", magic_string)
+
+	newData := make([]byte, 2048*10)
+	newData[2048*5+12] = 9
+
+	u2.AppendFile("file2", newData)
+
+	fu, _ := u.LoadFile("file1")
+	fu2, _ := u2.LoadFile("file2")
+
+	if !reflect.DeepEqual(fu, fu2) {
+		t.Error("files not equal")
 		return
+	}
+
+	if !reflect.DeepEqual(append(v, newData...), fu) {
+		t.Error("append didn't save")
 	}
 
 }
 
 func TestRevoke(t *testing.T) {
 	clear()
-	u, err := InitUser("alice", "fubar")
-	if err != nil {
-		t.Error("Failed to initialize user", err)
-		return
-	}
-	u2, err2 := InitUser("bob", "foobar")
-	if err2 != nil {
-		t.Error("Failed to initialize bob", err2)
-		return
-	}
+	u, _ := InitUser("alice", "fubar")
+
+	u2, _ := InitUser("bob", "foobar")
 
 	v := []byte("This is a test")
 	u.StoreFile("file1", v)
 
-	var v2 []byte
 	var magic_string string
 
-	v, err = u.LoadFile("file1")
+	v, _ = u.LoadFile("file1")
 
 	magic_string, _ = u.ShareFile("file1", "bob")
 
 	_ = u2.ReceiveFile("file2", "alice", magic_string)
 
-	v2, _ = u2.LoadFile("file2")
+	newData := make([]byte, 2048*10)
+	newData[2048*5+12] = 9
 
-	if !reflect.DeepEqual(v, v2) {
-		t.Error("Shared file is not the same", v, v2)
-		return
-	}
-
-	newData := make([]byte, MAX_BLOCK_SIZE*20)
-	newData[MAX_BLOCK_SIZE*10+14] = 9
-
-	u2.StoreFile("file2", newData)
-
-	newData2, _ := u2.LoadFile("file2")
-	newData1, _ := u.LoadFile("file1")
-
-	if !reflect.DeepEqual(newData1, newData2) {
-		t.Error("Shared file is not the same", newData1, newData2)
-		return
-	}
+	u2.AppendFile("file2", newData)
 
 	u.RevokeFile("file1", "bob")
 
-	tryAgain, err := u2.LoadFile("file2")
-	if err == nil || tryAgain != nil {
-		t.Error("Was able to load file")
+	f, err := u2.LoadFile("file2")
+	if err == nil || f != nil {
+		t.Error("was able to load file")
 	}
 
 	err = u2.AppendFile("file2", newData)
 	if err == nil {
-		t.Error("was able to append to file")
+		t.Error("sharee appended after revoke")
+	}
+
+	f, err = u.LoadFile("file1")
+
+	if reflect.DeepEqual(append(v, append(newData, newData...)...), f) {
+		t.Error("sharee appended after revoke")
 	}
 
 }
 
-func TestRevokeAllChildren(t *testing.T) {
+func TestRevokeTree(t *testing.T) {
+	clear()
+	u, _ := InitUser("alice", "fubar")
 
-	alicebranch := Sharebranch{
-		Parent:   "alice",
-		Children: []string{"bob", "charlie"},
-	}
-	bobbranch := Sharebranch{
-		Parent:   "bob",
-		Children: []string{"david"},
-	}
-	charliebranch := Sharebranch{
-		Parent:   "charlie",
-		Children: []string{"eric", "fred"},
-	}
-	davidbranch := Sharebranch{
-		Parent:   "david",
-		Children: []string{"george"},
-	}
-	ericbranch := Sharebranch{
-		Parent:   "eric",
-		Children: []string{},
-	}
-	fredbranch := Sharebranch{
-		Parent:   "fred",
-		Children: []string{},
-	}
-	georgebranch := Sharebranch{
-		Parent:   "george",
-		Children: []string{},
+	u2, _ := InitUser("bob", "foobar")
+
+	u3, _ := InitUser("cherie", "fubar")
+
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+
+	var magic_string string
+
+	v, _ = u.LoadFile("file1")
+
+	magic_string, _ = u.ShareFile("file1", "bob")
+
+	_ = u2.ReceiveFile("file2", "alice", magic_string)
+
+	magic_string, _ = u2.ShareFile("file2", "cherie")
+
+	_ = u3.ReceiveFile("file3", "bob", magic_string)
+
+	_, err := u3.LoadFile("file3")
+	if err != nil {
+		t.Error("third branch couldn't load file")
+		return
 	}
 
-	var dummyMetadata Metadata
-	dummyMetadata.Sharetree = []Sharebranch{alicebranch, bobbranch, charliebranch, davidbranch, ericbranch, fredbranch, georgebranch}
+	newData := make([]byte, 2048*5)
+	newData[2048*2+4] = 9
 
-	dummyMetadata.Sharetree = RevokeAllChildren(dummyMetadata.Sharetree, "bob")
-
-	expectedRemaining := []string{"alice", "charlie", "eric", "fred"}
-	for i := 0; i < len(dummyMetadata.Sharetree); i++ {
-		if dummyMetadata.Sharetree[i].Parent != expectedRemaining[i] {
-			t.Error("Did not revoke correctly", dummyMetadata.Sharetree, expectedRemaining)
-		}
+	err = u3.AppendFile("file3", newData)
+	if err != nil {
+		t.Error("third branch couldn't append file")
 	}
+
+	f3, _ := u3.LoadFile("file3")
+	f1, _ := u.LoadFile("file1")
+	f2, _ := u2.LoadFile("file2")
+
+	if !reflect.DeepEqual(f1, f2) || !reflect.DeepEqual(f2, f3) {
+		t.Error("appends didn't affect all users")
+	}
+
+	if !reflect.DeepEqual(f1, append(v, newData...)) {
+		t.Error("appends didnt update")
+	}
+
+	u.RevokeFile("file1", "bob")
+
+	f, err := u3.LoadFile("file3")
+	if err == nil || f != nil {
+		t.Error("was able to load file")
+	}
+
+	err = u3.AppendFile("file3", newData)
+	if err == nil {
+		t.Error("sharee appended after revoke")
+	}
+
+	f, err = u.LoadFile("file1")
+
+	if !reflect.DeepEqual(append(v, newData...), f) {
+		t.Error("sharee appended after revoke")
+	}
+
 }

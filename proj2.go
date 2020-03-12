@@ -783,10 +783,34 @@ func (userdata *User) ReceiveFile(filename string, sender string, magicString st
 
 	accessTokenKey, _ := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, userdata.Username, filename)
 
+	var metadata Metadata
+
+	err = loadMetaData(&metadata, &accessToken)
+	if err != nil {
+		return err
+	}
+
+	newBranch := Sharebranch{
+		Filename: filename,
+		Children: []string{},
+		Parent:   userdata.Username,
+	}
+
+	metadata.Sharetree = append(metadata.Sharetree, newBranch)
+
+	metaDataKey, _ := makeDataStoreKeyAll(METADATA_PREFIX, sender, accessToken.Filename)
+	metaDataRecord, _ := encryptAndMAC(metadata, accessToken.FileKey)
+	userlib.DatastoreSet(metaDataKey, metaDataRecord)
+
 	userlib.DatastoreSet(accessTokenKey, record)
 
 	return nil
 
+}
+
+func deleteUserAccessToken(username string, filename string) {
+	accessTokenKey, _ := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, username, filename)
+	userlib.DatastoreDelete(accessTokenKey)
 }
 
 // Removes target user's access.
@@ -813,6 +837,12 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 
 	if metadata.Owner != userdata.Username {
 		return errors.New("cannot revoke file because user is not owner of file")
+	}
+
+	for _, branch := range metadata.Sharetree {
+		if strings.Compare(branch.Parent, targetUsername) == 0 {
+			deleteUserAccessToken(targetUsername, branch.Filename)
+		}
 	}
 
 	newSharetree := RevokeAllChildren(metadata.Sharetree, targetUsername)
@@ -853,6 +883,7 @@ func removeBranch(sharetree []Sharebranch, targetParent string) (trimmedSharetre
 	for i := 0; i < len(sharetree); i++ {
 		curBranch = sharetree[i]
 		if curBranch.Parent == targetParent {
+			deleteUserAccessToken(targetParent, curBranch.Filename)
 			if i < len(sharetree)-1 {
 				return append(sharetree[:i], sharetree[i+1:]...), curBranch.Children
 			} else {
