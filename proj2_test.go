@@ -8,7 +8,6 @@ import (
 	_ "encoding/json"
 	_ "errors"
 	"reflect"
-	"strconv"
 	_ "strconv"
 	_ "strings"
 	"testing"
@@ -128,7 +127,7 @@ func TestGetUserWrongPassword(t *testing.T) {
 	}
 }
 
-func TestGetUserCorruptedRecord(t *testing.T) {
+func TestGetUserCorruptedUser(t *testing.T) {
 	clear()
 	t.Log("GetUser Test: return error for corrupted userdata record")
 	userlib.SetDebugStatus(true)
@@ -139,10 +138,9 @@ func TestGetUserCorruptedRecord(t *testing.T) {
 		return
 	}
 
-	key, _ := makeDataStoreKeyAll(ACCOUNT_INFO_PREFIX, "alice")
-	userlib.DatastoreSet(key, []byte("I am tampering with this record"))
+	scrambleDatastore()
 
-	u, err := GetUser("alice", "this is the wrong password")
+	u, err := GetUser("alice", "password")
 	if err == nil {
 		t.Error("Failed to error when userdata record is tampered", u)
 	} else {
@@ -289,31 +287,7 @@ func TestLoadInvalidFile(t *testing.T) {
 	}
 }
 
-func TestLoadCorruptedMetadata(t *testing.T) {
-	clear()
-	t.Log("Load Test: return error if metadata record is corrupted")
-	alice, err := InitUser("alice", "fubar")
-	if err != nil {
-		t.Error("Failed to initialize user", err)
-		return
-	}
-
-	v1 := []byte("This is a test")
-	alice.StoreFile("file1", v1)
-
-	key, _ := makeDataStoreKeyAll(METADATA_PREFIX, "alice", "file1")
-	userlib.DatastoreSet(key, []byte("corrupted data"))
-
-	check1, err := alice.LoadFile("file1")
-
-	if err == nil {
-		t.Error("Failed to error when file metadata is corrupted", check1)
-	} else {
-		t.Logf("Task failed successfully %s", err)
-	}
-}
-
-func TestLoadCorruptedBlock(t *testing.T) {
+func TestLoadCorruptedFile(t *testing.T) {
 	clear()
 	t.Log("Load Test: return error if a block record is corrupted")
 	alice, err := InitUser("alice", "fubar")
@@ -325,8 +299,7 @@ func TestLoadCorruptedBlock(t *testing.T) {
 	v1 := []byte("This is a test")
 	alice.StoreFile("file1", v1)
 
-	key, _ := makeDataStoreKeyAll(BLOCK_PREFIX, "alice", "file1", strconv.Itoa(0))
-	userlib.DatastoreSet(key, []byte("corrupted data"))
+	scrambleDatastore()
 
 	check1, err := alice.LoadFile("file1")
 
@@ -612,7 +585,7 @@ func TestShareIdenticalNames(t *testing.T) {
 
 func TestShareRestrictedAccess(t *testing.T) {
 	clear()
-	t.Log("Share Test: ensure that recipient only has access to sender's shared file and all of sender's files")
+	t.Log("Share Test: ensure that recipient only has access to sender's shared file and not all of sender's files")
 	u, err := InitUser("alice", "fubar")
 	if err != nil {
 		t.Error("Failed to initialize user", err)
@@ -661,7 +634,8 @@ func TestShareRestrictedAccess(t *testing.T) {
 
 }
 
-// Checks if file changes persist for all shared users
+//Function prologue for tests with big sharing tree
+// NOT A TEST
 /* Sharing hierarchy:
 	 Alice
 	/	 \
@@ -671,37 +645,34 @@ func TestShareRestrictedAccess(t *testing.T) {
 	   /		 \
 	 David		Eric
 */
-func TestShareHierarchy(t *testing.T) {
-	clear()
-	t.Log("Share Test: check to see if indirect sharees ")
-
+func helperBigSharePrologue(t *testing.T) ([]byte, *User, *User, *User, *User, *User, error) {
 	alice, err := InitUser("alice", "fubar")
 	if err != nil {
 		t.Error("Failed to initialize alice", err)
-		return
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	bob, err := InitUser("bob", "foobar")
 	if err != nil {
 		t.Error("Failed to initialize bob", err)
-		return
+		return nil, nil, nil, nil, nil, nil, err
 	}
 
 	charlie, err := InitUser("charlie", "barfu")
 	if err != nil {
 		t.Error("Failed to initialize charlie", err)
-		return
+		return nil, nil, nil, nil, nil, nil, err
 	}
 
 	david, err := InitUser("david", "blatt slatt")
 	if err != nil {
 		t.Error("Failed to initialize david", err)
-		return
+		return nil, nil, nil, nil, nil, nil, err
 	}
 
 	eric, err := InitUser("eric", "slime love all the time")
 	if err != nil {
 		t.Error("Failed to initialize david", err)
-		return
+		return nil, nil, nil, nil, nil, nil, err
 	}
 
 	file := []byte("This is my first file")
@@ -711,44 +682,55 @@ func TestShareHierarchy(t *testing.T) {
 	magic_string, err := alice.ShareFile("fileA", "bob")
 	if err != nil {
 		t.Error("Failed to share the a file", err)
-		return
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	err = bob.ReceiveFile("fileB", "alice", magic_string)
 	if err != nil {
 		t.Error("Failed to receive the share message", err)
-		return
+		return nil, nil, nil, nil, nil, nil, err
 	}
 
 	magic_string, err = alice.ShareFile("fileA", "charlie")
 	if err != nil {
 		t.Error("Failed to share the a file", err)
-		return
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	err = charlie.ReceiveFile("fileC", "alice", magic_string)
 	if err != nil {
 		t.Error("Failed to receive the share message", err)
-		return
+		return nil, nil, nil, nil, nil, nil, err
 	}
 
 	magic_string, err = charlie.ShareFile("fileC", "david")
 	if err != nil {
 		t.Error("Failed to share the a file", err)
-		return
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	err = david.ReceiveFile("fileD", "charlie", magic_string)
 	if err != nil {
 		t.Error("Failed to receive the share message", err)
-		return
+		return nil, nil, nil, nil, nil, nil, err
 	}
 
 	magic_string, err = charlie.ShareFile("fileC", "eric")
 	if err != nil {
 		t.Error("Failed to share the a file", err)
-		return
+		return nil, nil, nil, nil, nil, nil, err
 	}
 	err = eric.ReceiveFile("fileE", "charlie", magic_string)
 	if err != nil {
 		t.Error("Failed to receive the share message", err)
+		return nil, nil, nil, nil, nil, nil, err
+	}
+	return file, alice, bob, charlie, david, eric, nil
+}
+
+func TestShareHierarchy(t *testing.T) {
+	clear()
+	t.Log("Share Test: check to see if all sharees can see file changes")
+
+	_, alice, bob, charlie, david, eric, err := helperBigSharePrologue(t)
+	if err != nil {
 		return
 	}
 	/* ----- END SHARING  ----- */
@@ -978,103 +960,153 @@ func TestRevokeTree(t *testing.T) {
 
 }
 
-//NOT DONE YET
-func TestRevokeHierarchy(t *testing.T) {
+func TestRevokeChangeOfTokens(t *testing.T) {
 	clear()
-	t.Log("Share Test: check to see if indirect sharees ")
+	t.Log("Share Test: check to if access token change after revoke is handled correctly")
 
-	alice, err := InitUser("alice", "fubar")
+	file, alice, _, charlie, david, eric, err := helperBigSharePrologue(t)
 	if err != nil {
-		t.Error("Failed to initialize alice", err)
 		return
 	}
-	bob, err := InitUser("bob", "foobar")
-	if err != nil {
-		t.Error("Failed to initialize bob", err)
-		return
-	}
+	// ----- END SHARING  -----
 
-	charlie, err := InitUser("charlie", "barfu")
-	if err != nil {
-		t.Error("Failed to initialize charlie", err)
-		return
-	}
-
-	david, err := InitUser("david", "blatt slatt")
-	if err != nil {
-		t.Error("Failed to initialize david", err)
-		return
-	}
-
-	eric, err := InitUser("eric", "slime love all the time")
-	if err != nil {
-		t.Error("Failed to initialize david", err)
-		return
-	}
-
-	file := []byte("This is my first file")
-	alice.StoreFile("fileA", file)
-
-	/* ----- START SHARING  ----- */
-	magic_string, err := alice.ShareFile("fileA", "bob")
-	if err != nil {
-		t.Error("Failed to share the a file", err)
-		return
-	}
-	err = bob.ReceiveFile("fileB", "alice", magic_string)
+	// ----- START REVOKE -----
+	err = alice.RevokeFile("fileA", "bob")
 	if err != nil {
 		t.Error("Failed to receive the share message", err)
 		return
 	}
+	// ----- END REVOKE
 
-	magic_string, err = alice.ShareFile("fileA", "charlie")
+	fileA, err := alice.LoadFile("fileA")
 	if err != nil {
-		t.Error("Failed to share the a file", err)
+		t.Error("Failed to load file", err)
 		return
 	}
-	err = charlie.ReceiveFile("fileC", "alice", magic_string)
-	if err != nil {
-		t.Error("Failed to receive the share message", err)
-		return
-	}
-
-	magic_string, err = charlie.ShareFile("fileC", "david")
-	if err != nil {
-		t.Error("Failed to share the a file", err)
-		return
-	}
-	err = david.ReceiveFile("fileD", "charlie", magic_string)
-	if err != nil {
-		t.Error("Failed to receive the share message", err)
-		return
-	}
-
-	magic_string, err = charlie.ShareFile("fileC", "eric")
-	if err != nil {
-		t.Error("Failed to share the a file", err)
-		return
-	}
-	err = eric.ReceiveFile("fileE", "charlie", magic_string)
-	if err != nil {
-		t.Error("Failed to receive the share message", err)
-		return
-	}
-	/* ----- END SHARING  ----- */
-
-	/* ----- START ALICE EDIT AND VERIFY ----- */
-
-	fileA := []byte("This is my second file")
-	alice.StoreFile("fileA", fileA)
-
-	fileB, err := bob.LoadFile("fileB")
 	fileC, err := charlie.LoadFile("fileC")
+	if err != nil {
+		t.Error("Failed to load file", err)
+		return
+	}
 	fileD, err := david.LoadFile("fileD")
+	if err != nil {
+		t.Error("Failed to load file", err)
+		return
+	}
 	fileE, err := eric.LoadFile("fileE")
-
-	if !reflect.DeepEqual(fileB, fileA) || !reflect.DeepEqual(fileC, fileA) || !reflect.DeepEqual(fileD, fileA) || !reflect.DeepEqual(fileE, fileA) {
-		t.Error("Shared file was not updated for all users after owner edit")
+	if err != nil {
+		t.Error("Failed to load file", err)
 		return
 	}
 
-	/* ----- END ALICE EDIT AND VERIFY ----- */
+	if !reflect.DeepEqual(file, fileA) || !reflect.DeepEqual(file, fileC) || !reflect.DeepEqual(file, fileD) || !reflect.DeepEqual(file, fileE) {
+		t.Error("Failed to change tokens successfully")
+	}
+}
+
+func TestRevokeCorruptedChangeOfTokens(t *testing.T) {
+	clear()
+	t.Log("Share Test: check to if access token change after revoke is handled correctly")
+
+	_, alice, _, charlie, david, eric, err := helperBigSharePrologue(t)
+	if err != nil {
+		return
+	}
+	// ----- END SHARING  -----
+
+	// ----- START REVOKE -----
+	err = alice.RevokeFile("fileA", "bob")
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+
+	// ----- END REVOKE
+
+	scrambleDatastore()
+
+	_, err = alice.LoadFile("fileA")
+	if err == nil {
+		t.Error("Failed to error on corrupted token")
+		return
+	} else {
+		t.Logf("Errored as expected: %s", err)
+	}
+	_, err = charlie.LoadFile("fileC")
+	if err == nil {
+		t.Error("Failed to error on corrupted token")
+		return
+	} else {
+		t.Logf("Errored as expected: %s", err)
+	}
+	_, err = david.LoadFile("fileD")
+	if err == nil {
+		t.Error("Failed to error on corrupted token")
+		return
+	} else {
+		t.Logf("Errored as expected: %s", err)
+	}
+	_, err = eric.LoadFile("fileE")
+	if err == nil {
+		t.Error("Failed to error on corrupted token")
+		return
+	} else {
+		t.Logf("Errored as expected: %s", err)
+	}
+}
+
+func TestRevokeChangeOfTokensMissingOwnerKey(t *testing.T) {
+	clear()
+	t.Log("Share Test: check to if access token change after revoke is handled correctly")
+
+	_, alice, _, charlie, david, eric, err := helperBigSharePrologue(t)
+	if err != nil {
+		return
+	}
+	// ----- END SHARING  -----
+
+	// ----- START REVOKE -----
+	err = alice.RevokeFile("fileA", "bob")
+	if err != nil {
+		t.Error("Failed to receive the share message", err)
+		return
+	}
+	// ----- END REVOKE
+
+	userlib.KeystoreClear()
+
+	_, err = alice.LoadFile("fileA")
+	if err == nil {
+		t.Error("Failed to error on missing owner verify key", err)
+		return
+	} else {
+		t.Log(err)
+	}
+	_, err = charlie.LoadFile("fileC")
+	if err == nil {
+		t.Error("Failed to error on missing owner verify key", err)
+		return
+	}
+	_, err = david.LoadFile("fileD")
+	if err == nil {
+		t.Error("Failed to error on missing owner verify key", err)
+		return
+	}
+	_, err = eric.LoadFile("fileE")
+	if err == nil {
+		t.Error("Failed to error on missing owner verify key", err)
+		return
+	}
+}
+
+//To test corruption of datastore records
+func scrambleDatastore() {
+	datastore := userlib.DatastoreGetMap()
+	keys := make([]userlib.UUID, 0, len(datastore))
+	for k := range datastore {
+		keys = append(keys, k)
+	}
+	for _, k := range keys {
+		userlib.DatastoreSet(k, []byte("corrupted data"))
+	}
 }

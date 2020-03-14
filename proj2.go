@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 
 	// Likewise useful for debugging, etc...
-	"encoding/hex"
 
 	// UUIDs are generated right based on the cryptographic PRNG
 	// so lets make life easier and use those too...
@@ -66,37 +65,6 @@ const (
 // a) It shows you some useful primitives, and
 // b) it suppresses warnings for items not being imported.
 // Of course, this function can be deleted.
-func someUsefulThings() {
-	// Creates a random UUID
-	f := uuid.New()
-	userlib.DebugMsg("UUID as string:%v", f.String())
-
-	// Example of writing over a byte of f
-	f[0] = 10
-	userlib.DebugMsg("UUID as string:%v", f.String())
-
-	// takes a sequence of bytes and renders as hex
-	h := hex.EncodeToString([]byte("fubar"))
-	userlib.DebugMsg("The hex: %v", h)
-
-	// Marshals data into a JSON representation
-	// Will actually work with go structures as well
-	d, _ := json.Marshal(f)
-	userlib.DebugMsg("The json data: %v", string(d))
-	var g uuid.UUID
-	json.Unmarshal(d, &g)
-	userlib.DebugMsg("Unmashaled data %v", g.String())
-
-	// This creates an error type
-	userlib.DebugMsg("Creation of error %v", errors.New(strings.ToTitle("This is an error")))
-
-	// And a random RSA key.  In this case, ignoring the error
-	// return value
-	var pk userlib.PKEEncKey
-	var sk userlib.PKEDecKey
-	pk, sk, _ = userlib.PKEKeyGen()
-	userlib.DebugMsg("Key is %v, %v", pk, sk)
-}
 
 // Helper function: Takes the first 16 bytes and
 // converts it into the UUID type
@@ -180,8 +148,7 @@ func decryptAndMACEval(contents []byte, symKey []byte) (message []byte, err erro
 
 	ok := userlib.HMACEqual(MAC, calculatedMAC)
 	if !ok {
-		userlib.DebugMsg("MAC not equal to calculated MAC. Tampering detected")
-		return nil, errors.New("MAC not equal")
+		return nil, errors.New("mac not equal")
 	}
 	return message, nil
 }
@@ -238,7 +205,7 @@ func decryptAndVerifyAccessToken(contents []byte, accessToken *AccessToken, priv
 	if err != nil {
 		//Token may have changed and is now signed by owner
 		err = json.Unmarshal(message, accessToken)
-		ownerVerifyKey, ok := userlib.KeystoreGet(USER_DS_PREFIX + accessToken.OwnerUsername + accessToken.Filename)
+		ownerVerifyKey, ok := userlib.KeystoreGet(USER_DS_PREFIX + accessToken.OwnerUsername)
 		if !ok {
 			return errors.New("could not get owner verify key from keystore")
 		}
@@ -469,7 +436,6 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	//get data from dataStore
 	data, exists := userlib.DatastoreGet(key)
 	if !exists {
-		userlib.DebugMsg("u:" + username + " p:" + password + "does not exist")
 		return nil, errors.New("username not found error")
 	}
 
@@ -802,6 +768,12 @@ func (userdata *User) ReceiveFile(filename string, sender string, magicString st
 		return err
 	}
 
+	for i := 0; i < len(metadata.Sharetree); i++ {
+		if metadata.Sharetree[i].Parent == sender {
+			metadata.Sharetree[i].Children = append(metadata.Sharetree[i].Children, userdata.Username)
+		}
+	}
+
 	newBranch := Sharebranch{
 		Filename: filename,
 		Children: []string{},
@@ -810,7 +782,7 @@ func (userdata *User) ReceiveFile(filename string, sender string, magicString st
 
 	metadata.Sharetree = append(metadata.Sharetree, newBranch)
 
-	metaDataKey, _ := makeDataStoreKeyAll(METADATA_PREFIX, sender, accessToken.Filename)
+	metaDataKey, _ := makeDataStoreKeyAll(METADATA_PREFIX, accessToken.OwnerUsername, accessToken.Filename)
 	metaDataRecord, _ := encryptAndMAC(metadata, accessToken.FileKey)
 	userlib.DatastoreSet(metaDataKey, metaDataRecord)
 
@@ -857,7 +829,7 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 		}
 	}
 
-	newSharetree := RevokeAllChildren(metadata.Sharetree, targetUsername)
+	newSharetree := revokeAllChildren(metadata.Sharetree, targetUsername)
 	metadata.Sharetree = newSharetree
 
 	data, _ := userdata.LoadFile(filename)
@@ -874,7 +846,7 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 
 }
 
-func RevokeAllChildren(sharetree []Sharebranch, targetParent string) []Sharebranch {
+func revokeAllChildren(sharetree []Sharebranch, targetParent string) []Sharebranch {
 	var lostChildren, queue []string
 	var target string
 	for queue = []string{targetParent}; len(queue) > 0; {
