@@ -387,6 +387,12 @@ type AccessToken struct {
 func InitUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 
+	_, exists := userlib.KeystoreGet(username)
+
+	if exists {
+		return nil, errors.New("cannot create new user. username is taken")
+	}
+
 	userdata.OwnedFiles = []string{}
 	userdata.Username = username
 
@@ -774,6 +780,12 @@ func (userdata *User) ReceiveFile(filename string, sender string, magicString st
 		return errors.New("magic string is invalid")
 	}
 
+	accessTokenKey, _ := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, userdata.Username, filename)
+	_, ok := userlib.DatastoreGet(accessTokenKey)
+	if ok {
+		return errors.New("filename: " + filename + " already exists for user")
+	}
+
 	decryptAndVerifyAccessTokenRecipient([]byte(magicString), &accessToken, userdata.PrivateKey, sender)
 
 	record, err := encryptAndSign(accessToken, userdata.PublicKey, userdata.SignKey)
@@ -781,7 +793,7 @@ func (userdata *User) ReceiveFile(filename string, sender string, magicString st
 		return err
 	}
 
-	accessTokenKey, _ := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, userdata.Username, filename)
+	accessTokenKey, _ = makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, userdata.Username, filename)
 
 	var metadata Metadata
 
