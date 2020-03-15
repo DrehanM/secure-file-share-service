@@ -747,8 +747,8 @@ func (userdata *User) ReceiveFile(filename string, sender string, magicString st
 	}
 
 	accessTokenKey, _ := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, userdata.Username, filename)
-	_, ok := userlib.DatastoreGet(accessTokenKey)
-	if ok {
+	_, exists := userlib.DatastoreGet(accessTokenKey)
+	if exists {
 		return errors.New("filename: " + filename + " already exists for user")
 	}
 

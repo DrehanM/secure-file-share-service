@@ -1055,48 +1055,28 @@ func TestRevokeCorruptedChangeOfTokens(t *testing.T) {
 	}
 }
 
-func TestRevokeChangeOfTokensMissingOwnerKey(t *testing.T) {
+func TestReceiveBadMagicString(t *testing.T) {
 	clear()
-	t.Log("Share Test: check to if access token change after revoke is handled correctly")
-
-	_, alice, _, charlie, david, eric, err := helperBigSharePrologue(t)
+	_, alice, bob, _, _, _, err := helperBigSharePrologue(t)
 	if err != nil {
 		return
 	}
-	// ----- END SHARING  -----
 
-	// ----- START REVOKE -----
-	err = alice.RevokeFile("fileA", "bob")
+	file2 := []byte("a new file")
+	alice.StoreFile("file2", file2)
+
+	magic, err := alice.ShareFile("file2", "bob")
 	if err != nil {
-		t.Error("Failed to receive the share message", err)
-		return
+		t.Error("failed to share file", err)
 	}
-	// ----- END REVOKE
 
-	userlib.KeystoreClear()
+	err = bob.ReceiveFile("filename", "alice", magic[:10])
+	if err == nil {
+		t.Error("failed to error on bad magic string")
+	}
 
-	_, err = alice.LoadFile("fileA")
-	if err == nil {
-		t.Error("Failed to error on missing owner verify key", err)
-		return
-	} else {
-		t.Log(err)
-	}
-	_, err = charlie.LoadFile("fileC")
-	if err == nil {
-		t.Error("Failed to error on missing owner verify key", err)
-		return
-	}
-	_, err = david.LoadFile("fileD")
-	if err == nil {
-		t.Error("Failed to error on missing owner verify key", err)
-		return
-	}
-	_, err = eric.LoadFile("fileE")
-	if err == nil {
-		t.Error("Failed to error on missing owner verify key", err)
-		return
-	}
+	userlib.DatastoreClear()
+
 }
 
 //To test corruption of datastore records
