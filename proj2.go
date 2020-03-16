@@ -676,6 +676,9 @@ func (userdata *User) LoadFile(filename string) (data []byte, err error) {
 		if err != nil {
 			return nil, err
 		}
+		if block.BlockID != uint32(i) {
+			return nil, errors.New("tampering detected: file has been reordered")
+		}
 		file = append(file, block.Contents...)
 	}
 

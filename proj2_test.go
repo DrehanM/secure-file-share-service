@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/cs161-staff/userlib"
+	"github.com/google/uuid"
 	_ "github.com/google/uuid"
 )
 
@@ -891,6 +892,46 @@ func TestRevoke(t *testing.T) {
 
 }
 
+func TestRevokeShareAgain(t *testing.T) {
+	clear()
+	u, _ := InitUser("alice", "fubar")
+
+	u2, _ := InitUser("bob", "foobar")
+
+	v := []byte("This is a test")
+	u.StoreFile("file1", v)
+
+	var magic_string string
+
+	v, _ = u.LoadFile("file1")
+
+	magic_string, _ = u.ShareFile("file1", "bob")
+
+	_ = u2.ReceiveFile("file2", "alice", magic_string)
+
+	u.RevokeFile("file1", "bob")
+
+	err := u2.AppendFile("file2", []byte(" appended data attempt"))
+
+	if err == nil {
+		t.Error("Failed to error on illegal append")
+	}
+
+	block2 := []byte(" appended data by alice")
+	err = u.AppendFile("file1", block2)
+
+	magic_string, _ = u.ShareFile("file1", "bob")
+
+	_ = u2.ReceiveFile("file2", "alice", magic_string)
+
+	file, err := u2.LoadFile("file2")
+
+	if !reflect.DeepEqual(file, append(v, block2...)) {
+		t.Error("Did not correctly reshare")
+	}
+
+}
+
 func TestRevokeTree(t *testing.T) {
 	clear()
 	u, _ := InitUser("alice", "fubar")
@@ -1079,6 +1120,121 @@ func TestReceiveBadMagicString(t *testing.T) {
 
 }
 
+func TestSwapFileBlockPanic(t *testing.T) {
+	clear()
+
+	alice, _ := InitUser("alice", "fubar")
+
+	block0 := []byte("this is the first block")
+	block1 := []byte("this is the second block")
+
+	existingKeys := getDSKeys()
+
+	alice.StoreFile("file", block0)
+
+	block0key := getNewestKeys(existingKeys)[0]
+
+	existingKeys = getDSKeys()
+
+	alice.AppendFile("file", block1)
+
+	block1key := getNewestKeys(existingKeys)[0]
+
+	block0cipher, _ := userlib.DatastoreGet(block0key)
+	block1cipher, _ := userlib.DatastoreGet(block1key)
+
+	userlib.DatastoreSet(block0key, block1cipher)
+	userlib.DatastoreSet(block1key, block0cipher)
+
+	file, err := alice.LoadFile("file")
+
+	if err == nil {
+		t.Errorf("Did not detect block swap: %s\n", file)
+	} else {
+		t.Log("Task failed successfully", err)
+	}
+
+}
+
+func TestMissingBlockPanic(t *testing.T) {
+	clear()
+
+	alice, _ := InitUser("alice", "fubar")
+
+	block0 := []byte("this is the first block")
+	block1 := []byte("this is the second block")
+	block2 := []byte("this is the third block")
+
+	alice.StoreFile("file", block0)
+
+	alice.AppendFile("file", block1)
+
+	existingKeys := getDSKeys()
+
+	alice.AppendFile("file", block2)
+
+	block2Key := getNewestKeys(existingKeys)[0]
+
+	userlib.DatastoreDelete(block2Key)
+
+	file, err := alice.LoadFile("file")
+
+	if err == nil {
+		t.Errorf("Did not detect block deletion: %s\n", file)
+	} else {
+		t.Log("Task failed successfully", err)
+	}
+}
+
+func TestSwapMagicStrings(t *testing.T) {
+	clear()
+
+	alice, _ := InitUser("alice", "fubar")
+	bob, _ := InitUser("bob", "barfu")
+
+	file1 := []byte("this is file 1")
+	alice.StoreFile("file1", file1)
+
+	file2 := []byte("this is file 2")
+	alice.StoreFile("file2", file2)
+
+	magic1, _ := alice.ShareFile("file1", "bob")
+	magic2, _ := alice.ShareFile("file1", "bob")
+
+	bob.ReceiveFile("bobfile1", "alice", magic2)
+	bob.ReceiveFile("bobfile2", "alice", magic1)
+
+}
+
+func TestMissingBlockThenAppendPanic(t *testing.T) {
+	clear()
+
+	alice, _ := InitUser("alice", "fubar")
+
+	block0 := []byte("this is the first block")
+	block1 := []byte("this is the second block")
+	block2 := []byte("this is the third block")
+
+	alice.StoreFile("file", block0)
+
+	existingKeys := getDSKeys()
+
+	alice.AppendFile("file", block1)
+
+	block1Key := getNewestKeys(existingKeys)[0]
+	userlib.DatastoreDelete(block1Key)
+
+	alice.AppendFile("file", block2)
+
+	file, err := alice.LoadFile("file")
+
+	if err == nil {
+		t.Errorf("Did not detect block deletion: %s\n", file)
+	} else {
+		t.Log("Task failed successfully", err)
+	}
+}
+
 //To test corruption of datastore records
 func scrambleDatastore() {
 	datastore := userlib.DatastoreGetMap()
@@ -1089,4 +1245,31 @@ func scrambleDatastore() {
 	for _, k := range keys {
 		userlib.DatastoreSet(k, []byte("corrupted data"))
 	}
+}
+
+func getNewestKeys(existingKeys []uuid.UUID) []uuid.UUID {
+	keys := []uuid.UUID{}
+	datastore := userlib.DatastoreGetMap()
+	for dkey := range datastore {
+		flag := false
+		for _, ekey := range existingKeys {
+			if reflect.DeepEqual(dkey, ekey) {
+				flag = true
+				break
+			}
+		}
+		if !flag {
+			keys = append(keys, dkey)
+		}
+	}
+	return keys
+}
+
+func getDSKeys() []uuid.UUID {
+	keys := []uuid.UUID{}
+	datastore := userlib.DatastoreGetMap()
+	for dkey := range datastore {
+		keys = append(keys, dkey)
+	}
+	return keys
 }
