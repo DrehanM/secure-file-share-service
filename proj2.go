@@ -270,7 +270,7 @@ func loadAccessToken(accessToken *AccessToken, username string, filename string,
 
 func loadMetaData(metaData *Metadata, accessToken *AccessToken) (err error) {
 
-	key, _ := makeDataStoreKeyAll(METADATA_PREFIX, accessToken.OwnerUsername, accessToken.Filename)
+	key, _ := makeDataStoreKeyAll(METADATA_PREFIX, accessToken.FileHash)
 	record, ok := userlib.DatastoreGet(key)
 	if !ok {
 		return errors.New("metadata not found error")
@@ -284,7 +284,7 @@ func loadMetaData(metaData *Metadata, accessToken *AccessToken) (err error) {
 }
 
 func loadBlock(block *Block, blockID int, metaData *Metadata, accessToken *AccessToken) (err error) {
-	key, _ := makeDataStoreKeyAll(BLOCK_PREFIX, metaData.Owner, metaData.Filename, strconv.Itoa(blockID))
+	key, _ := makeDataStoreKeyAll(BLOCK_PREFIX, metaData.FileHash, strconv.Itoa(blockID))
 	record, ok := userlib.DatastoreGet(key)
 	if !ok {
 		return errors.New("file block not found error")
@@ -311,7 +311,7 @@ type User struct {
 }
 
 type Sharebranch struct {
-	Filename string
+	TokenKey uuid.UUID //testing
 	Parent   string
 	Children []string
 }
@@ -324,7 +324,7 @@ type Block struct {
 
 type Metadata struct {
 	Owner      string
-	Filename   string
+	FileHash   string
 	BlockCount uint32
 	Head       *Block
 	Sharetree  []Sharebranch
@@ -333,7 +333,8 @@ type Metadata struct {
 type AccessToken struct {
 	FileKey       []byte
 	OwnerUsername string
-	Filename      string
+	//Filename      string
+	FileHash string
 }
 
 // This creates a user.  It will only be called once for a user
@@ -520,7 +521,7 @@ func (metadata Metadata) storeFileBlocks(headptr *Block, fileKey []byte) (err er
 		if err != nil {
 			return err
 		}
-		key, err := makeDataStoreKeyAll(BLOCK_PREFIX, metadata.Owner, metadata.Filename, strconv.Itoa(int(block.BlockID)))
+		key, err := makeDataStoreKeyAll(BLOCK_PREFIX, metadata.FileHash, strconv.Itoa(int(block.BlockID)))
 		if err != nil {
 			return err
 		}
@@ -541,35 +542,15 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 	exists, _ := loadAccessToken(&accessToken, userdata.Username, filename, userdata.PrivateKey)
 
 	if !exists {
-		sharebranch := Sharebranch{
-			Filename: filename,
-			Parent:   userdata.Username,
-			Children: []string{},
-		}
-
-		metadata := Metadata{
-			Owner:      userdata.Username,
-			Filename:   filename,
-			BlockCount: 0,
-			Sharetree:  []Sharebranch{sharebranch},
-		}
-
-		blockCount, headptr := constructFileBlocks(0, data)
-
-		metadata.BlockCount = blockCount
 
 		fileKey := userlib.RandomBytes(FILE_KEY_SIZE)
 
-		metadata.storeFileBlocks(headptr, fileKey)
-
-		metaDataKey, _ := makeDataStoreKeyAll(METADATA_PREFIX, userdata.Username, filename)
-		metaDataRecord, _ := encryptAndMAC(metadata, fileKey)
-		userlib.DatastoreSet(metaDataKey, metaDataRecord)
+		fileUUID, _ := makeDataStoreKeyAll(userdata.Username, filename)
 
 		accessToken := AccessToken{
 			FileKey:       fileKey,
-			OwnerUsername: metadata.Owner,
-			Filename:      metadata.Filename,
+			FileHash:      fileUUID.String(),
+			OwnerUsername: userdata.Username,
 		}
 
 		accessTokenRecord, _ := encryptAndSign(
@@ -578,8 +559,31 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 			userdata.SignKey,
 		)
 
-		accessTokenKey, _ := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, userdata.Username, metadata.Filename)
+		accessTokenKey, _ := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, userdata.Username, filename)
 		userlib.DatastoreSet(accessTokenKey, accessTokenRecord)
+
+		sharebranch := Sharebranch{
+			TokenKey: accessTokenKey,
+			Parent:   userdata.Username,
+			Children: []string{},
+		}
+
+		metadata := Metadata{
+			Owner:      userdata.Username,
+			FileHash:   fileUUID.String(),
+			BlockCount: 0,
+			Sharetree:  []Sharebranch{sharebranch},
+		}
+
+		blockCount, headptr := constructFileBlocks(0, data)
+
+		metadata.BlockCount = blockCount
+
+		metadata.storeFileBlocks(headptr, fileKey)
+
+		metaDataKey, _ := makeDataStoreKeyAll(METADATA_PREFIX, metadata.FileHash)
+		metaDataRecord, _ := encryptAndMAC(metadata, fileKey)
+		userlib.DatastoreSet(metaDataKey, metaDataRecord)
 
 	} else {
 		var metadata Metadata
@@ -592,7 +596,7 @@ func (userdata *User) StoreFile(filename string, data []byte) {
 
 		metadata.storeFileBlocks(headptr, accessToken.FileKey)
 
-		metaDataKey, _ := makeDataStoreKeyAll(METADATA_PREFIX, accessToken.OwnerUsername, accessToken.Filename)
+		metaDataKey, _ := makeDataStoreKeyAll(METADATA_PREFIX, accessToken.FileHash)
 		metaDataRecord, _ := encryptAndMAC(metadata, accessToken.FileKey)
 		userlib.DatastoreSet(metaDataKey, metaDataRecord)
 
@@ -634,7 +638,7 @@ func (userdata *User) AppendFile(filename string, data []byte) (err error) {
 	metadata.storeFileBlocks(head, accessToken.FileKey)
 
 	metaDataRecord, _ := encryptAndMAC(metadata, accessToken.FileKey)
-	metaDataKey, err := makeDataStoreKeyAll(METADATA_PREFIX, accessToken.OwnerUsername, accessToken.Filename)
+	metaDataKey, err := makeDataStoreKeyAll(METADATA_PREFIX, accessToken.FileHash)
 	if err != nil {
 		return
 	}
@@ -778,14 +782,14 @@ func (userdata *User) ReceiveFile(filename string, sender string, magicString st
 	}
 
 	newBranch := Sharebranch{
-		Filename: filename,
+		TokenKey: accessTokenKey,
 		Children: []string{},
 		Parent:   userdata.Username,
 	}
 
 	metadata.Sharetree = append(metadata.Sharetree, newBranch)
 
-	metaDataKey, _ := makeDataStoreKeyAll(METADATA_PREFIX, accessToken.OwnerUsername, accessToken.Filename)
+	metaDataKey, _ := makeDataStoreKeyAll(METADATA_PREFIX, accessToken.FileHash)
 	metaDataRecord, _ := encryptAndMAC(metadata, accessToken.FileKey)
 	userlib.DatastoreSet(metaDataKey, metaDataRecord)
 
@@ -793,11 +797,6 @@ func (userdata *User) ReceiveFile(filename string, sender string, magicString st
 
 	return nil
 
-}
-
-func deleteUserAccessToken(username string, filename string) {
-	accessTokenKey, _ := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, username, filename)
-	userlib.DatastoreDelete(accessTokenKey)
 }
 
 // Removes target user's access.
@@ -828,7 +827,7 @@ func (userdata *User) RevokeFile(filename string, targetUsername string) (err er
 
 	for _, branch := range metadata.Sharetree {
 		if strings.Compare(branch.Parent, targetUsername) == 0 {
-			deleteUserAccessToken(targetUsername, branch.Filename)
+			userlib.DatastoreDelete(branch.TokenKey)
 		}
 	}
 
@@ -870,7 +869,7 @@ func removeBranch(sharetree []Sharebranch, targetParent string) (trimmedSharetre
 	for i := 0; i < len(sharetree); i++ {
 		curBranch = sharetree[i]
 		if curBranch.Parent == targetParent {
-			deleteUserAccessToken(targetParent, curBranch.Filename)
+			userlib.DatastoreDelete(curBranch.TokenKey)
 			if i < len(sharetree)-1 {
 				return append(sharetree[:i], sharetree[i+1:]...), curBranch.Children
 			} else {
@@ -893,8 +892,8 @@ func reissueNewTokens(ownerdata User, metadata Metadata) error {
 	newFileKey := userlib.RandomBytes(FILE_KEY_SIZE)
 	newAccessToken := AccessToken{
 		FileKey:       newFileKey,
-		OwnerUsername: metadata.Owner,
-		Filename:      metadata.Filename,
+		FileHash:      metadata.FileHash,
+		OwnerUsername: ownerdata.Username,
 	}
 
 	ownerSignKey := ownerdata.SignKey
@@ -908,11 +907,8 @@ func reissueNewTokens(ownerdata User, metadata Metadata) error {
 		if err != nil {
 			return err
 		}
-		accessTokenKey, err := makeDataStoreKeyAll(ACCESS_TOKEN_PREFIX, branch.Parent, branch.Filename)
-		if err != nil {
-			return err
-		}
-		userlib.DatastoreSet(accessTokenKey, accessTokenRecord)
+
+		userlib.DatastoreSet(branch.TokenKey, accessTokenRecord)
 	}
 	return nil
 }
