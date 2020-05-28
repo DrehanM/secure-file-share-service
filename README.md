@@ -1,5 +1,4 @@
-# 161-proj2
-Secure File Sharing System
+# Secure File Share Service
 
 Second project for CS 161: Computer Security.
 
